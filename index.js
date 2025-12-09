@@ -401,11 +401,11 @@ function getLeftStickSensitivity() {
 }
 function getLookSensitivityX() {
     const v = parseFloat(lookSensitivityXEl?.value);
-    return Number.isFinite(v) ? v : 1;
+    return Number.isFinite(v) ? v : 0.4;
 }
 function getLookSensitivityY() {
     const v = parseFloat(lookSensitivityYEl?.value);
-    return Number.isFinite(v) ? v : 1;
+    return Number.isFinite(v) ? v : 0.4;
 }
 function isInvertLook() {
     return !!invertLookEl?.checked;
