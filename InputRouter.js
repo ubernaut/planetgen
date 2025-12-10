@@ -23,7 +23,6 @@ export class InputRouter {
         this.onKeyUp = this.onKeyUp.bind(this);
         this.target.addEventListener('keydown', this.onKeyDown);
         this.target.addEventListener('keyup', this.onKeyUp);
-        this._loggedFirstKey = false;
     }
 
     setMode(mode) {
@@ -31,10 +30,6 @@ export class InputRouter {
     }
 
     onKeyDown(event) {
-        if (!this._loggedFirstKey) {
-            console.warn('[TinyDebug/InputRouter] keydown', event.code);
-            this._loggedFirstKey = true;
-        }
         const { code, repeat } = event;
         switch (code) {
             case 'KeyW':

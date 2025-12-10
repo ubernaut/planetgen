@@ -40,7 +40,6 @@ export class TinyPlanetControls {
         this.velocity = new THREE.Vector3();
         this.direction = new THREE.Vector3();
         this.verticalVelocity = 0;
-        this.cameraPitch = 0; // Track pitch separately for reliable mouselook
 
         // The player rig
         this.player = new THREE.Object3D();
@@ -57,11 +56,6 @@ export class TinyPlanetControls {
         this.onKeyUp = this.onKeyUp.bind(this);
         this.onMouseMove = this.onMouseMove.bind(this);
         this.onPointerLockChange = this.onPointerLockChange.bind(this);
-        this.onPointerLockError = this.onPointerLockError.bind(this);
-        this.prevMouse = null; // fallback for non-locked mouse deltas
-        
-        // Remember the original camera parent so we can restore it on exit
-        this.originalCameraParent = camera.parent || scene;
     }
 
     setPlanet(mesh) {
@@ -74,43 +68,30 @@ export class TinyPlanetControls {
         this.enabled = true;
         this.planetMesh = planetMesh;
         this.planetGroup = planetMesh.parent;
-        if (this.externalInput) {
-            this.externalInput.clear();
-        }
 
         // Convert start point to Local Direction
         const localPoint = startPointWorld.clone();
         this.planetMesh.worldToLocal(localPoint);
-        const spawnHeight = localPoint.length() + 2.0; 
         const startDir = localPoint.normalize();
 
         // Attach player to Planet (Local Space)
         this.planetMesh.add(this.player);
         
-        // Position player using terrain height when available
-        let surfaceRadius = spawnHeight;
-        const settings = this.planetMesh.userData?.settings;
-        const forge = this.planetMesh.userData?.forge;
-        let sampledHeight = null;
-        if (settings && forge) {
-            const h = forge.getHeightAt(startDir);
-            surfaceRadius = settings.radius + (h - settings.seaLevel) * settings.heightScale + this.playerHeight + 0.2;
-            sampledHeight = { rawHeight: h, seaLevel: settings.seaLevel, radius: settings.radius, heightScale: settings.heightScale };
-        }
-        this.player.position.copy(startDir).multiplyScalar(surfaceRadius);
+        // Position player
+        // We start slightly above surface based on startDir
+        const spawnHeight = localPoint.length() + 2.0; 
+        this.player.position.copy(startDir).multiplyScalar(spawnHeight);
         
-        // Attach camera first
+        // Align up
+        const quaternion = new THREE.Quaternion();
+        quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), startDir);
+        this.player.quaternion.copy(quaternion);
+        this.player.up.copy(startDir);
+        
+        // Attach camera
         this.player.add(this.camera);
         this.camera.position.set(0, 0, 0);
         this.camera.rotation.set(0, 0, 0);
-        
-        // Align player so Y=surface normal and -Z=horizon (not into ground!)
-        this.applyTangentLook(startDir);
-
-        // Update matrices
-        this.player.updateMatrixWorld(true);
-        this.camera.updateMatrixWorld(true);
-        this.planetMesh.updateMatrixWorld(true);
 
         // Reset physics
         this.velocity.set(0, 0, 0);
@@ -122,11 +103,8 @@ export class TinyPlanetControls {
         if (!isMobile && this.domElement.requestPointerLock) {
             this.domElement.requestPointerLock();
         }
-
+        
         this.addListeners();
-
-        // Debug dump for spawn issues
-        this.debugSpawn(startDir, surfaceRadius, sampledHeight);
     }
 
     exit() {
@@ -138,11 +116,7 @@ export class TinyPlanetControls {
 
         // Detach camera
         this.player.remove(this.camera);
-        if (this.originalCameraParent) {
-            this.originalCameraParent.add(this.camera);
-        } else {
-            this.scene.add(this.camera);
-        }
+        this.scene.add(this.camera); // Return to scene root
         
         // Remove player
         if (this.player.parent) {
@@ -165,7 +139,6 @@ export class TinyPlanetControls {
         }
         document.addEventListener('mousemove', this.onMouseMove);
         document.addEventListener('pointerlockchange', this.onPointerLockChange);
-        document.addEventListener('pointerlockerror', this.onPointerLockError);
     }
 
     removeListeners() {
@@ -175,27 +148,16 @@ export class TinyPlanetControls {
         }
         document.removeEventListener('mousemove', this.onMouseMove);
         document.removeEventListener('pointerlockchange', this.onPointerLockChange);
-        document.removeEventListener('pointerlockerror', this.onPointerLockError);
-        this.prevMouse = null;
     }
 
     onPointerLockChange() {
         this.isLocked = document.pointerLockElement === this.domElement;
-        console.warn('[TinyDebug] pointerlock change', { locked: this.isLocked, el: document.pointerLockElement?.id || document.pointerLockElement?.tagName });
-        if (!this.isLocked) {
-            this.prevMouse = null;
+        if (!this.isLocked && this.enabled) {
+            // User unlocked cursor
         }
-    }
-
-    onPointerLockError() {
-        console.warn('[TinyDebug] pointer lock error');
     }
 
     onKeyDown(event) {
-        if (!this._loggedFirstKey) {
-            console.warn('[TinyDebug] keydown', event.code);
-            this._loggedFirstKey = true;
-        }
         switch (event.code) {
             case 'ArrowUp':
             case 'KeyW': this.moveForward = true; break;
@@ -240,45 +202,19 @@ export class TinyPlanetControls {
     }
 
     onMouseMove(event) {
-        // Must have pointer lock to process mouse movement (like main branch)
-        if (!this.isLocked) {
-            // Debug log skipped mouse events
-            if (!this._skippedMouseLog) {
-                console.warn('[TinyDebug] mousemove SKIPPED (not locked)', { isLocked: this.isLocked, enabled: this.enabled });
-                this._skippedMouseLog = true;
-            }
-            return;
-        }
+        if (!this.isLocked) return;
 
         const movementX = event.movementX || 0;
         const movementY = event.movementY || 0;
 
-        // Debug: log mouse movement
-        if (!this._mouseLogCount) this._mouseLogCount = 0;
-        if (this._mouseLogCount < 3) {
-            console.warn('[TinyDebug] mousemove PROCESSED', { movementX, movementY, isLocked: this.isLocked });
-            this._mouseLogCount++;
-        }
-
-        // Yaw: rotate player around its local Y axis (surface normal)
-        this.player.rotateY(-movementX * 0.002);
-        
-        // Pitch: update our tracked pitch value
-        this.cameraPitch -= movementY * 0.002;
-        this.cameraPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.cameraPitch));
-        
-        // Apply pitch as a quaternion rotation around local X axis
-        // This avoids Euler angle issues from gravity realignment
-        this.camera.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.cameraPitch);
-        
-        // Debug log
-        if (!this._rotLogCount) this._rotLogCount = 0;
-        if (this._rotLogCount < 3) {
-            console.warn('[TinyDebug] rotation applied', {
-                movementX, movementY,
-                cameraPitch: this.cameraPitch
-            });
-            this._rotLogCount++;
+        if (this.isFlying) {
+            const camLocalUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+            this.player.rotateOnAxis(camLocalUp, -movementX * 0.002);
+            this.camera.rotateX(-movementY * 0.002);
+        } else {
+            this.player.rotateY(-movementX * 0.002);
+            this.camera.rotateX(-movementY * 0.002);
+            this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
         }
     }
 
@@ -298,99 +234,28 @@ export class TinyPlanetControls {
     }
 
     snapToSurface() {
-        if (!this.planetMesh || !this.planetMesh.userData?.forge || !this.planetMesh.userData?.settings) {
-            console.warn('[TinyDebug] snap skipped (no planet data)');
-            return;
-        }
+        if (!this.planetMesh || !this.planetMesh.userData?.forge || !this.planetMesh.userData?.settings) return;
         const forge = this.planetMesh.userData.forge;
         const settings = this.planetMesh.userData.settings;
-        const dir = this.player.position.clone().normalize();
+        // Raycast from camera through center
+        this.surfaceRay.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+        const hit = this.surfaceRay.intersectObject(this.planetMesh, false);
+        if (!hit.length) return;
+        const pointWorld = hit[0].point.clone();
+        const dirLocal = pointWorld.clone();
+        this.planetMesh.worldToLocal(dirLocal);
+        const dir = dirLocal.normalize();
         const h = forge.getHeightAt(dir);
         const targetRadius = settings.radius + (h - settings.seaLevel) * settings.heightScale + this.playerHeight;
-        this.player.position.copy(dir).setLength(targetRadius + 0.2);
+        const newPos = dir.clone().multiplyScalar(targetRadius + 0.2);
+        this.player.position.copy(newPos);
+        // Align up
         const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
         this.player.quaternion.copy(quat);
         this.player.up.copy(dir);
-        // Reset camera pitch but keep player yaw (so mouselook yaw stays valid)
-        this.camera.rotation.set(0, 0, 0);
+        this.camera.rotation.set(0,0,0);
         this.velocity.set(0,0,0);
         this.verticalVelocity = 0;
-        this.debugSnap(dir, targetRadius + this.playerHeight, true);
-    }
-
-    debugSpawn(startDir, surfaceRadius, sampledHeight) {
-        const ptrEl = document.pointerLockElement;
-        const worldPos = new THREE.Vector3();
-        this.player.getWorldPosition(worldPos);
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion())).normalize();
-        const inputState = this.externalInput?.getState ? { ...this.externalInput.getState() } : null;
-        console.warn('[TinyDebug] spawn', {
-            pointerLock: ptrEl ? { id: ptrEl.id || ptrEl.tagName, tag: ptrEl.tagName } : null,
-            playerWorld: { x: worldPos.x, y: worldPos.y, z: worldPos.z, radius: worldPos.length() },
-            forward: { x: forward.x, y: forward.y, z: forward.z },
-            startDir: { x: startDir.x, y: startDir.y, z: startDir.z },
-            sampledHeight,
-            surfaceRadius,
-            movementState: { flying: this.isFlying, swimming: this.isSwimming },
-            inputState
-        });
-    }
-
-    debugSnap(dir, targetRadius, hit) {
-        const ptrEl = document.pointerLockElement;
-        const worldPos = new THREE.Vector3();
-        this.player.getWorldPosition(worldPos);
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion())).normalize();
-        console.warn('[TinyDebug] snap', {
-            pointerLock: ptrEl ? { id: ptrEl.id || ptrEl.tagName, tag: ptrEl.tagName } : null,
-            playerWorld: { x: worldPos.x, y: worldPos.y, z: worldPos.z, radius: worldPos.length() },
-            forward: { x: forward.x, y: forward.y, z: forward.z },
-            dir: { x: dir.x, y: dir.y, z: dir.z },
-            targetRadius,
-            hit
-        });
-    }
-
-    applyTangentLook(upDir) {
-        // The player's Y axis should align with the surface normal (up)
-        // The player's forward (-Z) should be tangent to the surface
-        const up = upDir.clone().normalize();
-        
-        // Compute a forward direction tangent to the surface
-        // Use world Y to derive a tangent, unless we're at a pole
-        let forward;
-        if (Math.abs(up.y) > 0.99) {
-            // Near poles - use world X as forward reference
-            forward = new THREE.Vector3(1, 0, 0);
-        } else {
-            // Cross up with world Y to get a tangent (right), then cross up with right to get forward
-            const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), up).normalize();
-            forward = new THREE.Vector3().crossVectors(up, right).normalize();
-        }
-        
-        // Create player orientation: Y=up, looking along forward
-        // Use lookAt but offset from player position
-        const playerPos = this.player.position.clone();
-        const lookTarget = playerPos.clone().add(forward);
-        
-        // Build a quaternion that orients Y to up and -Z toward forward
-        const m = new THREE.Matrix4();
-        m.lookAt(playerPos, lookTarget, up);
-        this.player.quaternion.setFromRotationMatrix(m);
-        this.player.up.copy(up);
-        
-        // Reset camera to look straight ahead - use quaternion
-        this.cameraPitch = 0;
-        this.camera.quaternion.identity();
-        
-        this.player.updateMatrixWorld(true);
-        this.camera.updateMatrixWorld(true);
-        
-        console.warn('[TinyDebug] applyTangentLook', {
-            up: { x: up.x, y: up.y, z: up.z },
-            forward: { x: forward.x, y: forward.y, z: forward.z },
-            cameraRotationAfter: { x: this.camera.rotation.x, y: this.camera.rotation.y, z: this.camera.rotation.z }
-        });
     }
 
     update(delta) {
@@ -407,19 +272,6 @@ export class TinyPlanetControls {
             this.isRunning = !!a.run;
             this.rollLeft = !!a.rollLeft;
             this.rollRight = !!a.rollRight;
-            
-            // Debug: log when movement input is detected
-            if (!this._loggedMovement && (this.moveForward || this.moveBackward || this.moveLeft || this.moveRight)) {
-                console.warn('[TinyDebug] movement input', { 
-                    forward: this.moveForward, 
-                    backward: this.moveBackward,
-                    left: this.moveLeft,
-                    right: this.moveRight,
-                    delta,
-                    playerPos: this.player.position.clone()
-                });
-                this._loggedMovement = true;
-            }
             if (this.externalInput.consume('flyToggle')) {
                 this.toggleFlight();
             }
@@ -485,18 +337,9 @@ export class TinyPlanetControls {
             }
         }
 
-        // Variable friction for ice
-        let friction = 10.0;
-        let traction = 1.0;
-        
-        if (isFrozen && !this.isFlying && !this.isSwimming) {
-            friction = 0.5; // Slippery
-            traction = 0.05; // Reduced control authority to maintain similar top speed but slow response
-        }
-
         // Friction
-        this.velocity.x -= this.velocity.x * friction * delta;
-        this.velocity.z -= this.velocity.z * friction * delta;
+        this.velocity.x -= this.velocity.x * 10.0 * delta;
+        this.velocity.z -= this.velocity.z * 10.0 * delta;
 
         let speed = this.walkSpeed;
         if (this.isFlying) speed = this.flySpeed;
@@ -507,8 +350,8 @@ export class TinyPlanetControls {
         this.direction.x = Number(this.moveRight) - Number(this.moveLeft);
         this.direction.normalize();
 
-        if (this.moveForward || this.moveBackward) this.velocity.z += this.direction.z * speed * traction * delta;
-        if (this.moveLeft || this.moveRight) this.velocity.x -= this.direction.x * speed * traction * delta;
+        if (this.moveForward || this.moveBackward) this.velocity.z += this.direction.z * speed * delta;
+        if (this.moveLeft || this.moveRight) this.velocity.x -= this.direction.x * speed * delta;
 
         if (this.isFlying || this.isSwimming) {
              const moveVec = new THREE.Vector3();

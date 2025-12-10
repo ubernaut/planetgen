@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Planet Gen Demo</title>
   <link rel="icon" type="image/png" href="./assets/favicon-C5JQPe8v.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,6 +19,10 @@
       --muted: #94a3b8;
     }
     * { box-sizing: border-box; }
+    html, body {
+      touch-action: none;
+      overscroll-behavior: none;
+    }
     body {
       margin: 0;
       overflow: hidden;
@@ -30,6 +34,7 @@
       display: block;
       width: 100vw;
       height: 100vh;
+      touch-action: none;
     }
     #hud {
       position: fixed;
@@ -149,6 +154,9 @@
     #hud.collapsed .subtitle { margin-bottom: 0; }
     #hud button:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(34, 211, 238, 0.25); filter: saturate(1.1); }
     #hud button:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none; }
+    #mobileControls, #mobileControls * {
+      touch-action: none;
+    }
     #status {
       margin-top: 12px;
       font-size: 12px;
@@ -287,7 +295,7 @@
       display: none;
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-BA0GD8XH.js"></script>
+  <script type="module" crossorigin src="./assets/index-6PAqZ1E8.js"></script>
 </head>
 <body>
   <div id="reticle" aria-hidden="true"></div>
