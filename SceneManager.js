@@ -4,6 +4,9 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 export class SceneManager {
     constructor(canvas) {
         this.canvas = canvas;
+        if (this.canvas && this.canvas.setAttribute) {
+            this.canvas.setAttribute('tabindex', '0'); // allow focus for pointer lock
+        }
         
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ 
@@ -43,6 +46,21 @@ export class SceneManager {
         this.controls.noPan = true;
         this.controls.minDistance = 12;
         this.controls.maxDistance = 60;
+        // Safe-guard TrackballControls touch handling: ignore stray touches we don't track
+        if (typeof this.controls.onTouchMove === 'function') {
+            const origTouchMove = this.controls.onTouchMove.bind(this.controls);
+            this.controls.onTouchMove = (event) => {
+                if (!event.touches || event.touches.length === 0) return;
+                return origTouchMove(event);
+            };
+        }
+        if (typeof this.controls.onTouchEnd === 'function') {
+            const origTouchEnd = this.controls.onTouchEnd.bind(this.controls);
+            this.controls.onTouchEnd = (event) => {
+                if (!event.touches) return;
+                return origTouchEnd(event);
+            };
+        }
 
         // Lights
         this.scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.9));

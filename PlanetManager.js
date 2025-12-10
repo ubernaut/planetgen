@@ -99,8 +99,8 @@ export class PlanetManager {
         }
     }
 
-    update(delta) {
-        if (this.planet) {
+    update(delta, rotatePlanet = true) {
+        if (this.planet && rotatePlanet) {
             this.planet.rotation.y += 0.0009;
         }
         if (this.water) this.waterUniforms.time.value += 0.016;

@@ -355,11 +355,11 @@ sceneManager.renderer.setAnimationLoop(() => {
         pollVRInputs();
     }
     
+    const rotatePlanet = !tinyControls.enabled;
     if (tinyControls.enabled) {
         tinyControls.update(delta);
-    } else {
-        planetManager.update(delta); // Rotates planet
     }
+    planetManager.update(delta, rotatePlanet); // keep water/atmosphere/clouds ticking even in Tiny mode
     sceneManager.update(); // Always render (controls.update is a no-op when disabled)
     uiManager.syncMobileVisibility(isMobileDevice(), tinyControls.enabled);
 });

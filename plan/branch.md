@@ -2,7 +2,7 @@ llm instructions for this file: this file contains the short term goals for this
 
 immediate goals: 
 
-- None pending. Await further instructions.
+- Fix TinyPlanet first-person (spawn height/orientation, pointer-lock/mouselook, mobile input). Current state: broken after refactor; attempts failed (still spawning underground/inward-facing).
 
 recent progress:
 
