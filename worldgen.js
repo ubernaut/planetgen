@@ -292,6 +292,7 @@ export class PlanetForge {
                     varying vec3 vDir;
                     attribute float waterMask;
                     varying float vWater;
+                    varying float vSlope;
                     uniform float uIceCap;
                     ${shader.vertexShader}
                 `.replace(
@@ -301,13 +302,22 @@ export class PlanetForge {
                     vHeight = length(transformed) - ${radius.toFixed(1)};
                     vDir = normalize(transformed);
                     vWater = waterMask;
+                    vSlope = 1.0 - dot(normalize(normal), normalize(position));
                     `
                 );
                 shader.fragmentShader = `
                     varying float vHeight;
                     varying vec3 vDir;
                     varying float vWater;
+                    varying float vSlope;
                     uniform float uIceCap;
+                    
+                    float hash(vec3 p) {
+                        p = fract(p * 0.3183099 + .1);
+                        p *= 17.0;
+                        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+                    }
+                    
                     ${shader.fragmentShader}
                 `.replace(
                     '#include <color_fragment>',
@@ -343,9 +353,31 @@ export class PlanetForge {
                     } else {
                         col = snow;
                     }
+                    
+                    // ROCKY AREAS: modulated by slope and noise
+                    float noise = hash(vDir * 80.0);
+                    // Steepness threshold (0 = flat, 1 = vertical)
+                    // We start mixing rock on slopes > ~10-15%
+                    float steepness = smoothstep(0.1, 0.35, vSlope + (noise * 0.1 - 0.05));
+                    
+                    if (heightVal >= sea) {
+                        col = mix(col, rock, steepness);
+                    }
+                    
+                    // Add roughness/noise to rock areas
+                    if (steepness > 0.1 || (heightVal >= midland && heightVal < highland)) {
+                        col *= (0.9 + 0.2 * noise);
+                    }
+
                     float snowBlend = smoothstep(highland - 0.02, highland + 0.1, heightVal);
                     float pole = smoothstep(1.0 - uIceCap, 1.0, abs(vDir.y));
-                    col = mix(col, snow, max(snowBlend, pole * 0.8));
+                    
+                    // Reduce snow on very steep cliffs (optional realism)
+                    float snowStick = 1.0 - smoothstep(0.4, 0.6, vSlope); 
+                    float snowAmt = max(snowBlend, pole * 0.8) * snowStick;
+                    
+                    col = mix(col, snow, snowAmt);
+                    
                     if(waterFactor > 0.0) {
                         float wf = clamp(waterFactor, 0.0, 1.0);
                         vec3 wet = mix(shallow, deep, 0.6);

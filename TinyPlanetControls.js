@@ -72,14 +72,13 @@ export class TinyPlanetControls {
         // Convert start point to Local Direction
         const localPoint = startPointWorld.clone();
         this.planetMesh.worldToLocal(localPoint);
+        const spawnHeight = localPoint.length() + 2.0; 
         const startDir = localPoint.normalize();
 
         // Attach player to Planet (Local Space)
         this.planetMesh.add(this.player);
         
         // Position player
-        // We start slightly above surface based on startDir
-        const spawnHeight = localPoint.length() + 2.0; 
         this.player.position.copy(startDir).multiplyScalar(spawnHeight);
         
         // Align up
@@ -337,9 +336,18 @@ export class TinyPlanetControls {
             }
         }
 
+        // Variable friction for ice
+        let friction = 10.0;
+        let traction = 1.0;
+        
+        if (isFrozen && !this.isFlying && !this.isSwimming) {
+            friction = 0.5; // Slippery
+            traction = 0.05; // Reduced control authority to maintain similar top speed but slow response
+        }
+
         // Friction
-        this.velocity.x -= this.velocity.x * 10.0 * delta;
-        this.velocity.z -= this.velocity.z * 10.0 * delta;
+        this.velocity.x -= this.velocity.x * friction * delta;
+        this.velocity.z -= this.velocity.z * friction * delta;
 
         let speed = this.walkSpeed;
         if (this.isFlying) speed = this.flySpeed;
@@ -350,8 +358,8 @@ export class TinyPlanetControls {
         this.direction.x = Number(this.moveRight) - Number(this.moveLeft);
         this.direction.normalize();
 
-        if (this.moveForward || this.moveBackward) this.velocity.z += this.direction.z * speed * delta;
-        if (this.moveLeft || this.moveRight) this.velocity.x -= this.direction.x * speed * delta;
+        if (this.moveForward || this.moveBackward) this.velocity.z += this.direction.z * speed * traction * delta;
+        if (this.moveLeft || this.moveRight) this.velocity.x -= this.direction.x * speed * traction * delta;
 
         if (this.isFlying || this.isSwimming) {
              const moveVec = new THREE.Vector3();

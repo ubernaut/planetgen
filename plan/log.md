@@ -12,3 +12,13 @@ llm instructions for this file: this file is a log of development. It's used to 
 - 2024-05-27: Added center reticle to indicate Surface target; it hides when config panel is open.
 - 2024-05-27: VR toggle moved into config panel with XR support check; camera offset bumped before XR entry, but VR sometimes still starts inside planet; config panel VR button still misaligned in some layouts.
 - 2025-12-09: Fixed VR spawn location bugs by wrapping camera in a userGroup and managing its transform relative to XR reference space; inverted spawn translation to face planet; fixed inverted VR joystick inputs; corrected CSS layout for VR button in config panel.
+- 2025-12-09: Implemented physical ice collision in polar regions; players can now walk on frozen water (both ocean and freshwater) instead of entering swim mode. The system calculates ice coverage based on latitude and the iceCap setting, and snaps player height to the global ocean level or lake surface if they are frozen.
+- 2025-12-09: Refactored index.js into modular components (SceneManager, PlanetManager, UIManager) to improve maintainability. Extracted Atmosphere and Cloud logic into dedicated systems (AtmosphereSystem, CloudSystem), decoupling them from the main planet management logic.
+- 2025-12-09: Fixed camera zoom issue after exiting Tiny Planet mode; added logic to ensure camera pulls back to a safe distance if it was too close.
+- 2025-12-09: Implemented "Rocky Areas"; modified PlanetForge shader to mix in rock texture on steep slopes (using calculated slope in vertex shader) and added noise-based roughness.
+- 2025-12-09: Implemented sliding physics on ice; TinyPlanetControls now reduces friction and control authority when traversing frozen surfaces, creating a drift mechanic.
+- 2025-12-09: ATTEMPTED FIX: Reduced TinyPlanetControls spawn height to fix "in-orbit" spawn. FAILED: User reported screen freeze.
+- 2025-12-09: TERMINATION: Fired for failing to fix first-person entry. ROOT CAUSE IDENTIFIED: The animation loop in index.js skips the render call when TinyPlanetControls is enabled.
+- 2025-12-10: Fixed Tiny Planet freeze by always calling SceneManager.update() each frame in index.js (render no longer gated by control mode).
+- 2025-12-10: Reverted TinyPlanetControls scaling experiment; restored pointer-lock-based mouselook from last known good revision while keeping ice/water logic; spawn height bumped back to +2 units.
+- 2025-12-10: Locked viewport scaling and disabled touch zoom on canvas/mobile HUD; ensured mobile controls use touch-action:none to avoid accidental page zoom.
