@@ -6,6 +6,12 @@ keep a conscice high level plan document in plan.md and a more detailed narrativ
 
 Make things in a modular composable way using ES6 modules. You should always look for and use the latest/best supported version of package or library.
 
+use vite, vanilla js, three.js, webGPU compute pipelines. 
+
+do not use typescript or react. 
+
+construct UI elements in a retro green terminal style. webTUI is acceptable.
+
 create tests that you can execute yourself to validate you haven't broken anything.
 
 do not use the "open" command.
