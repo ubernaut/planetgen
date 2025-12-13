@@ -13,7 +13,7 @@ An interactive WebGL planet generator that simulates plate tectonics, hydraulic 
 - **Atmosphere & clouds**: Toggleable atmosphere shell plus configurable cloud shader (fbm/billow/cellular), speed, density, height, and multiple layers.
 - **Surface explorer**: Tiny Planet first-person mode with walking, running, swimming, flying, jump, and surface snap; orbit view uses Trackball controls.
 - **Mobile-friendly controls**: HUD auto-collapses; mobile overlay with twin sticks, action buttons (fly/jump/run/exit/surface) and center reticle. Sensitivities and invert look are configurable via a cog menu.
-- **Polar ice**: Water shader blends to ice based on the iceCap setting; ice cap size is adjustable.
+- **Polar ice**: Water shader blends to ice based on the iceCap setting; ice cap size is adjustable. Frozen water is solid and walkable.
 
 ## Controls
 - **Orbit view**: Drag to rotate, scroll/pinch to zoom, middle-click the planet to enter Tiny mode, Surface button snaps to visible point.
@@ -26,7 +26,6 @@ An interactive WebGL planet generator that simulates plate tectonics, hydraulic 
 - Preset-driven parameters for resolution, plates, erosion, smoothing, sea level, plate deltas, ice caps, atmosphere, clouds, etc.
 
 ## Future Plans
-- **VR mode**: WebXR entry/exit and controller mappings via the input router.
 - **Input router expansion**: unify desktop/mobile/VR inputs, richer mobile visuals, and twin-stick tuning.
 - **Swimming polish**: further refine shallow-water handling and orientation resets.
 - **Water/ice visuals**: extra polish for polar blending and shoreline detail.

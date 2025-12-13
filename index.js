@@ -914,6 +914,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
     const modeId = settings.mode === 'billow' ? 1 : settings.mode === 'cellular' ? 2 : 0;
     const uniforms = {
         time: { value: 0 },
+        windOffset: { value: 0 },
         color: { value: new THREE.Color(settings.color) },
         opacity: { value: settings.alpha },
         sunDir: { value: sunDir.clone().normalize() },
@@ -937,6 +938,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
             #include <common>
             #include <logdepthbuf_pars_vertex>
             uniform float time;
+            uniform float windOffset;
             uniform vec3 sunDir;
             uniform vec3 windDir;
             uniform float planetRadius;
@@ -986,7 +988,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
             void main() {
                 vec3 pos = position;
                 vec3 dir = normalize(pos);
-                float base = fbm(dir * (noiseScale * 0.05) + windDir * time);
+                float base = fbm(dir * (noiseScale * 0.05) + windDir * windOffset);
                 float n = base;
                 if (mode > 0.5 && mode < 1.5) {
                     n = abs(base) * 2.0 - 1.0;
@@ -1009,6 +1011,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
             uniform vec3 color;
             uniform float opacity;
             uniform float time;
+            uniform float windOffset;
             uniform vec3 sunDir;
             uniform vec3 windDir;
             uniform float planetRadius;
@@ -1059,7 +1062,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
                 vec3 dir = normalize(vWorld);
                 float day = clamp(dot(dir, normalize(sunDir)), 0.0, 1.0);
                 float lat = 1.0 - abs(dir.y);
-                float base = fbm(dir * (noiseScale * 0.02 + 0.6) + windDir * time * 0.5 + vec3(0.0, time * 0.02, 0.0));
+                float base = fbm(dir * (noiseScale * 0.02 + 0.6) + windDir * windOffset + vec3(0.0, windOffset * 0.07, 0.0));
                 float n = base;
                 if (mode > 0.5 && mode < 1.5) {
                     n = abs(base) * 2.0 - 1.0;
@@ -1307,9 +1310,9 @@ function animate() {
             const u = mesh.userData.uniforms;
             const s = mesh.userData.settings;
             const speed = s.speed || 1;
-            u.time.value += dt * speed;
-            const windAngle = u.time.value * 0.2;
-            u.windDir.value.set(Math.sin(windAngle), 0, Math.cos(windAngle)).normalize();
+            // Accumulate wind offset at constant rate controlled by speed slider
+            // Wind direction is constant (set at creation) - no rotation to avoid spiral acceleration
+            u.windOffset.value += dt * speed * 0.3;
         }
     }
     if (atmosphere) atmosphereUniforms.time.value += 0.002;

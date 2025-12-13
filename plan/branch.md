@@ -2,27 +2,19 @@ llm instructions for this file: this file contains the short term goals for this
 
 immediate goals: 
 
-switch from orbitcontrols to trackball controls for the planet overview mode. 
-
-create input multiplexer abstraction to help map controls for mobile/vr/desktop to each io paradigm. can you come up with a better name than inputmultiplexer? 
-
-add mobile twinstick controls + buttons for any actions (fly/walk/return to trackball controls). 
-detect and switch to mobile controls dynamically
-
-add VR mode and controls. 
-
-fix swimming and transition between swimming to walking vice versa. exiting the water does not reset player orientation. "shallow" water should not trigger swim mechanic. 
-
-fix being zoomed in too far after exiting first person mode. 
-
-add equivalent mobile control buttons for each input. 
-
+- Fix TinyPlanet first-person (spawn height/orientation, pointer-lock/mouselook, mobile input). Current state: broken after refactor; attempts failed (still spawning underground/inward-facing).
 
 recent progress:
 
-- HUD now collapses and auto-collapses on mobile to free viewport space for upcoming touch controls.
-- Input router scaffold added (desktop keymap wired, mobile/desktop mode hook); TinyPlanetControls now reads shared action state, paving the way for touch/VR mappings.
-- TrackballControls now replace OrbitControls for overview; added basic mobile overlay buttons (move/run/jump/fly/exit) wired into the input router and auto-shown on small screens.
-- Water shader now blends to ice near poles using the iceCap slider.
-- VR entry/exit button added (WebXR), with thumbstick locomotion mapping and button triggers (jump/fly/exit) via the input router.
-- Implemented physical ice collision in polar regions; players can now walk on frozen water instead of swimming.
+- Fixed camera zoom issue after exiting Tiny Planet mode.
+- Implemented "Rocky Areas": Add surface detail/roughness modulation based on slope/height.
+- Implemented sliding physics on ice surfaces.
+- Refactored index.js: Extracted rendering, UI, and Planet generation into separate modules (SceneManager, PlanetManager, UIManager).
+- Modularized Atmosphere and Cloud systems.
+- Implemented physical ice collision in polar regions.
+- Fixed VR spawn location bugs and inverted joystick inputs.
+- VR entry/exit button added (WebXR), with thumbstick locomotion mapping.
+- Water shader now blends to ice near poles.
+- TrackballControls replaced OrbitControls for overview.
+- Added mobile twinstick controls and dynamic switching.
+- Input router abstraction created.

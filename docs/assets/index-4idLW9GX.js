@@ -3834,6 +3834,7 @@ void main() {
                     varying vec3 vDir;
                     attribute float waterMask;
                     varying float vWater;
+                    varying float vSlope;
                     uniform float uIceCap;
                     ${p.vertexShader}
                 `.replace("#include <begin_vertex>",`
@@ -3841,11 +3842,20 @@ void main() {
                     vHeight = length(transformed) - ${e.toFixed(1)};
                     vDir = normalize(transformed);
                     vWater = waterMask;
+                    vSlope = 1.0 - dot(normalize(normal), normalize(position));
                     `),p.fragmentShader=`
                     varying float vHeight;
                     varying vec3 vDir;
                     varying float vWater;
+                    varying float vSlope;
                     uniform float uIceCap;
+                    
+                    float hash(vec3 p) {
+                        p = fract(p * 0.3183099 + .1);
+                        p *= 17.0;
+                        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+                    }
+                    
                     ${p.fragmentShader}
                 `.replace("#include <color_fragment>",`
                     // Recover normalized height value used for displacement
@@ -3879,9 +3889,31 @@ void main() {
                     } else {
                         col = snow;
                     }
+                    
+                    // ROCKY AREAS: modulated by slope and noise
+                    float noise = hash(vDir * 80.0);
+                    // Steepness threshold (0 = flat, 1 = vertical)
+                    // We start mixing rock on slopes > ~10-15%
+                    float steepness = smoothstep(0.1, 0.35, vSlope + (noise * 0.1 - 0.05));
+                    
+                    if (heightVal >= sea) {
+                        col = mix(col, rock, steepness);
+                    }
+                    
+                    // Add roughness/noise to rock areas
+                    if (steepness > 0.1 || (heightVal >= midland && heightVal < highland)) {
+                        col *= (0.9 + 0.2 * noise);
+                    }
+
                     float snowBlend = smoothstep(highland - 0.02, highland + 0.1, heightVal);
                     float pole = smoothstep(1.0 - uIceCap, 1.0, abs(vDir.y));
-                    col = mix(col, snow, max(snowBlend, pole * 0.8));
+                    
+                    // Reduce snow on very steep cliffs (optional realism)
+                    float snowStick = 1.0 - smoothstep(0.4, 0.6, vSlope); 
+                    float snowAmt = max(snowBlend, pole * 0.8) * snowStick;
+                    
+                    col = mix(col, snow, snowAmt);
+                    
                     if(waterFactor > 0.0) {
                         float wf = clamp(waterFactor, 0.0, 1.0);
                         vec3 wet = mix(shallow, deep, 0.6);
@@ -4012,10 +4044,11 @@ void main() {
                 if(a < 0.01) discard;
                 gl_FragColor = vec4(glowColor, a);
             }
-        `});return new Rt(c,u)}function R_(i,e,t,n,s,r,a){const o=Math.max(.1,i+a.height),l=a.mode==="billow"?1:a.mode==="cellular"?2:0,c={time:{value:0},color:{value:new Ae(a.color)},opacity:{value:a.alpha},sunDir:{value:t.clone().normalize()},windDir:{value:new L(0,0,1)},planetRadius:{value:n},seaLevel:{value:s},heightScale:{value:r},speed:{value:a.speed},quantity:{value:a.quantity},noiseScale:{value:Math.max(.1,a.resolution)},mode:{value:l}},u=new li(o,Math.max(1,Math.floor(e*.5))),d=new Gt({uniforms:c,transparent:!0,depthWrite:!1,side:en,blending:Sn,vertexShader:`
+        `});return new Rt(c,u)}function R_(i,e,t,n,s,r,a){const o=Math.max(.1,i+a.height),l=a.mode==="billow"?1:a.mode==="cellular"?2:0,c={time:{value:0},windOffset:{value:0},color:{value:new Ae(a.color)},opacity:{value:a.alpha},sunDir:{value:t.clone().normalize()},windDir:{value:new L(0,0,1)},planetRadius:{value:n},seaLevel:{value:s},heightScale:{value:r},speed:{value:a.speed},quantity:{value:a.quantity},noiseScale:{value:Math.max(.1,a.resolution)},mode:{value:l}},u=new li(o,Math.max(1,Math.floor(e*.5))),d=new Gt({uniforms:c,transparent:!0,depthWrite:!1,side:en,blending:Sn,vertexShader:`
             #include <common>
             #include <logdepthbuf_pars_vertex>
             uniform float time;
+            uniform float windOffset;
             uniform vec3 sunDir;
             uniform vec3 windDir;
             uniform float planetRadius;
@@ -4065,7 +4098,7 @@ void main() {
             void main() {
                 vec3 pos = position;
                 vec3 dir = normalize(pos);
-                float base = fbm(dir * (noiseScale * 0.05) + windDir * time);
+                float base = fbm(dir * (noiseScale * 0.05) + windDir * windOffset);
                 float n = base;
                 if (mode > 0.5 && mode < 1.5) {
                     n = abs(base) * 2.0 - 1.0;
@@ -4087,6 +4120,7 @@ void main() {
             uniform vec3 color;
             uniform float opacity;
             uniform float time;
+            uniform float windOffset;
             uniform vec3 sunDir;
             uniform vec3 windDir;
             uniform float planetRadius;
@@ -4137,7 +4171,7 @@ void main() {
                 vec3 dir = normalize(vWorld);
                 float day = clamp(dot(dir, normalize(sunDir)), 0.0, 1.0);
                 float lat = 1.0 - abs(dir.y);
-                float base = fbm(dir * (noiseScale * 0.02 + 0.6) + windDir * time * 0.5 + vec3(0.0, time * 0.02, 0.0));
+                float base = fbm(dir * (noiseScale * 0.02 + 0.6) + windDir * windOffset + vec3(0.0, windOffset * 0.07, 0.0));
                 float n = base;
                 if (mode > 0.5 && mode < 1.5) {
                     n = abs(base) * 2.0 - 1.0;
@@ -4154,4 +4188,4 @@ void main() {
                 float fresnel = pow(1.0 - max(dot(viewDir, vNormal), 0.0), 2.0);
                 gl_FragColor = vec4(color * (0.8 + fresnel * 0.4), alpha);
             }
-        `}),f=new Rt(u,d);return f.userData.uniforms=c,f.userData.settings=a,f.renderOrder=2,f}function C_(){var i,e;for(const t of ys)tn.remove(t),t.geometry.dispose(),(e=(i=t.material).dispose)==null||e.call(i);ys=[]}function Kc(){return{id:"base",enabled:Oc.checked,alpha:et(parseFloat(bo.value)||.74,0,1),speed:et(parseFloat(To.value)||.9,0,2),quantity:et(parseFloat(wo.value)||.76,0,1),height:et(parseFloat(Ao.value)||-2.4,-5,5),color:Bc.value||"#ffffff",resolution:Math.max(1,Math.floor(parseFloat(Ro.value)||256)),mode:zc.value||"billow"}}function On(i){if(!rt)return;C_();const e=[],t=Kc();t.enabled&&e.push(t);for(const n of Mn)n.enabled&&e.push(n);for(const n of e){const s=R_(rt.radius+rt.heightScale*.2,rt.subdivisions,i,rt.radius,rt.seaLevel,rt.heightScale,n);ys.push(s),tn.add(s)}}function P_(i){if(!rt)return;if(!Eo.checked){jt&&(jt.visible=!1);return}const e=et(parseFloat(wn.value)||.35,.05,1.5),t=et(parseFloat(Vn.value)||.5,0,5),n=et(parseFloat(os.value)||.4,0,1),s=As.value||"#4da8ff";qc(Yc(rt.radius,rt.subdivisions,rt.heightScale,t,e,i,n,s))}function D_(i){const e=document.createElement("div");e.className="layer",e.style.border="1px solid var(--border)",e.style.padding="8px",e.style.marginBottom="8px";const t=document.createElement("div");t.textContent=`Layer ${i.label||Mn.length+1}`,t.style.fontSize="12px",t.style.color="var(--muted)",e.appendChild(t);const n=(m,g,x,p,h)=>{const E=document.createElement("div");E.className="field";const b=document.createElement("label");b.textContent=m;const _=document.createElement("div");_.className="range-row";const A=document.createElement("input");A.type="range",A.min=x,A.max=p,A.step=h,A.value=i[g];const T=document.createElement("span");return T.className="value",T.textContent=Number(i[g]).toFixed(h<1?2:0),_.appendChild(A),_.appendChild(T),E.appendChild(b),E.appendChild(_),A.addEventListener("input",()=>{i[g]=parseFloat(A.value),T.textContent=Number(i[g]).toFixed(h<1?2:0),On(new L().copy($t.position).normalize())}),E},s=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.checked=i.enabled,r.addEventListener("change",()=>{i.enabled=r.checked,On(new L().copy($t.position).normalize())}),s.appendChild(r),s.append(" Layer enabled"),e.appendChild(s),e.appendChild(n("Alpha","alpha",0,1,.01)),e.appendChild(n("Speed","speed",0,2,.05)),e.appendChild(n("Quantity","quantity",0,1,.01)),e.appendChild(n("Height","height",-5,5,.05)),e.appendChild(n("Resolution","resolution",1,256,1));const a=document.createElement("div");a.className="field";const o=document.createElement("label");o.textContent="Shader";const l=document.createElement("select");["fbm","billow","cellular"].forEach(m=>{const g=document.createElement("option");g.value=m,g.textContent=m.charAt(0).toUpperCase()+m.slice(1),i.mode===m&&(g.selected=!0),l.appendChild(g)}),l.addEventListener("change",()=>{i.mode=l.value,On(new L().copy($t.position).normalize())}),a.appendChild(o),a.appendChild(l),e.appendChild(a);const c=document.createElement("div");c.className="field";const u=document.createElement("label");u.textContent="Color";const d=document.createElement("input");d.type="color",d.value=i.color,d.addEventListener("input",()=>{i.color=d.value,On(new L().copy($t.position).normalize())}),c.appendChild(u),c.appendChild(d),e.appendChild(c);const f=document.createElement("button");return f.type="button",f.textContent="Remove layer",f.addEventListener("click",()=>{Mn=Mn.filter(m=>m!==i),Lo(),On(new L().copy($t.position).normalize())}),e.appendChild(f),e}function Lo(){Kl.innerHTML="";for(const i of Mn)Kl.appendChild(D_(i))}function L_(){const{innerWidth:i,innerHeight:e}=window;dt.aspect=i/e,dt.updateProjectionMatrix(),Vt.setSize(i,e),nt&&nt.setMode(yr()?"mobile":"desktop"),Wc()}function I_(){const i=f_.getDelta();if(ln(),Gn&&B_(),Ht.enabled?Ht.update(i):(_t&&!Yi&&(_t.rotation.y+=9e-4),Ze.update()),Wc(),Nn&&(io.time.value+=.016),nn&&(nn.material.uniforms.time.value+=.016),ys.length){const e=Math.min(i,.25);for(const t of ys){const n=t.userData.uniforms,r=t.userData.settings.speed||1;n.time.value+=e*r;const a=n.time.value*.2;n.windDir.value.set(Math.sin(a),0,Math.cos(a)).normalize()}}jt&&(ps.time.value+=.002),Vt.render(An,dt)}_s&&_s.addEventListener("click",()=>{Vc(!Ja.classList.contains("collapsed"))});document.addEventListener("surface",kc);function U_(i){if(!sa||!pr)return;const e=sa.style.display!=="block";sa.style.display=e?"block":"none",pr.setAttribute("aria-expanded",e.toString()),zi&&(zi.style.display=e?"none":"block")}pr&&pr.addEventListener("click",()=>U_());async function N_(){if(!(!navigator.xr||!Bn))try{aa=await navigator.xr.isSessionSupported("immersive-vr"),Bn.style.display=aa?"block":"none",Bn&&(Bn.disabled=!aa)}catch(i){console.warn("XR support check failed",i)}}async function F_(){if(!navigator.xr){Tt("WebXR not available");return}try{const i=await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor","bounded-floor"]});if(Gn=i,Vt.xr.enabled=!0,await Vt.xr.setSession(i),Ze&&(Ze.enabled=!1),_t&&!Ht.enabled){const e=((rt==null?void 0:rt.radius)??Co)*Po()+((rt==null?void 0:rt.heightScale)??0),t=Math.max(e*2,30),n=dt.position.clone().sub(Ze.target);n.lengthSq()<1e-6&&n.set(0,0,1),n.normalize();const s=new L(0,0,0),r=s.clone().sub(n.multiplyScalar(t));ni.position.copy(r),ni.lookAt(s),dt.position.set(0,0,0),dt.rotation.set(0,0,0)}Bn.textContent="Exit VR",Tt("VR session started"),i.addEventListener("end",()=>{Gn=null,no.clear(),Vt.xr.enabled=!1,ni.position.set(0,0,0),ni.rotation.set(0,0,0),ni.quaternion.identity(),Ze&&(Ze.enabled=!0),Bn.textContent="Enter VR",Tt("")})}catch(i){console.error(i),Tt("VR start failed")}}function O_(){Gn&&Gn.end()}function B_(){if(!Gn||!nt)return;let i=0,e=0;const t=.15;for(const n of Gn.inputSources){const s=n.gamepad;if(!s)continue;const r=no.get(n)||[],a=s.buttons||[],o=s.axes||[];o.length>=4&&(i=o[2],e=o[3]);const l=a.map(c=>!!c&&c.pressed);l[0]&&!r[0]&&nt.trigger("jump"),l[1]&&!r[1]&&nt.trigger("flyToggle"),l[3]&&!r[3]&&nt.trigger("exit"),no.set(n,l)}nt.setAction("forward",e>t),nt.setAction("backward",e<-t),nt.setAction("left",i>t),nt.setAction("right",i<-t)}Bn&&Bn.addEventListener("click",()=>{Gn?O_():F_()});Qa.addEventListener("click",()=>Do(Tn.value));const z_=[ts,ns,ci,En,hi,ui,is,di,fi,pi,wn,mi,gi,_i,ws,Sr];function tc(){Hn&&(ln(),rt&&(rt.planetDiameterKm=gr()),Gc(),Yi||Tt(`Planet diameter set to ${gr().toLocaleString()} km`))}function so(){Yi||(clearTimeout(to),to=setTimeout(()=>Do(Tn.value),400))}z_.forEach(i=>{i.addEventListener("input",()=>{ln(),ec(),so()}),i.addEventListener("change",()=>{ln(),ec(),so()})});Tn.addEventListener("change",()=>{Xc(Tn.value),Tt("Preset applied. Regenerating…"),so()});Hn&&(Hn.addEventListener("input",tc),Hn.addEventListener("change",tc));function nc(){ln(),P_(new L().copy($t.position).normalize())}function ic(){ln(),On(new L().copy($t.position).normalize())}[wn,os,As,Eo].forEach(i=>{i.addEventListener(i.type==="color"?"input":"change",nc),i.type==="range"&&i.addEventListener("input",nc)});[Oc,bo,To,wo,Ao,Bc,Ro,zc].forEach(i=>{i.addEventListener(i.type==="color"?"input":"change",ic),i.type==="range"&&i.addEventListener("input",ic)});d_.addEventListener("click",()=>{const i=Kc(),e=Mn.length?Mn[Mn.length-1].height:i.height,t={...i,id:`extra-${Date.now()}`,height:e+.3};Mn.push(t),Lo(),On(new L().copy($t.position).normalize())});window.addEventListener("resize",L_);[Wi,Xi,qi].forEach(i=>{i&&i.addEventListener("input",ln)});xs&&xs.addEventListener("change",ln);Xc(Tn.value);Do(Tn.value);Lo();p_();Vt.setAnimationLoop(I_);N_();
+        `}),f=new Rt(u,d);return f.userData.uniforms=c,f.userData.settings=a,f.renderOrder=2,f}function C_(){var i,e;for(const t of ys)tn.remove(t),t.geometry.dispose(),(e=(i=t.material).dispose)==null||e.call(i);ys=[]}function Kc(){return{id:"base",enabled:Oc.checked,alpha:et(parseFloat(bo.value)||.74,0,1),speed:et(parseFloat(To.value)||.9,0,2),quantity:et(parseFloat(wo.value)||.76,0,1),height:et(parseFloat(Ao.value)||-2.4,-5,5),color:Bc.value||"#ffffff",resolution:Math.max(1,Math.floor(parseFloat(Ro.value)||256)),mode:zc.value||"billow"}}function On(i){if(!rt)return;C_();const e=[],t=Kc();t.enabled&&e.push(t);for(const n of Mn)n.enabled&&e.push(n);for(const n of e){const s=R_(rt.radius+rt.heightScale*.2,rt.subdivisions,i,rt.radius,rt.seaLevel,rt.heightScale,n);ys.push(s),tn.add(s)}}function P_(i){if(!rt)return;if(!Eo.checked){jt&&(jt.visible=!1);return}const e=et(parseFloat(wn.value)||.35,.05,1.5),t=et(parseFloat(Vn.value)||.5,0,5),n=et(parseFloat(os.value)||.4,0,1),s=As.value||"#4da8ff";qc(Yc(rt.radius,rt.subdivisions,rt.heightScale,t,e,i,n,s))}function D_(i){const e=document.createElement("div");e.className="layer",e.style.border="1px solid var(--border)",e.style.padding="8px",e.style.marginBottom="8px";const t=document.createElement("div");t.textContent=`Layer ${i.label||Mn.length+1}`,t.style.fontSize="12px",t.style.color="var(--muted)",e.appendChild(t);const n=(m,g,x,p,h)=>{const E=document.createElement("div");E.className="field";const b=document.createElement("label");b.textContent=m;const _=document.createElement("div");_.className="range-row";const A=document.createElement("input");A.type="range",A.min=x,A.max=p,A.step=h,A.value=i[g];const T=document.createElement("span");return T.className="value",T.textContent=Number(i[g]).toFixed(h<1?2:0),_.appendChild(A),_.appendChild(T),E.appendChild(b),E.appendChild(_),A.addEventListener("input",()=>{i[g]=parseFloat(A.value),T.textContent=Number(i[g]).toFixed(h<1?2:0),On(new L().copy($t.position).normalize())}),E},s=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.checked=i.enabled,r.addEventListener("change",()=>{i.enabled=r.checked,On(new L().copy($t.position).normalize())}),s.appendChild(r),s.append(" Layer enabled"),e.appendChild(s),e.appendChild(n("Alpha","alpha",0,1,.01)),e.appendChild(n("Speed","speed",0,2,.05)),e.appendChild(n("Quantity","quantity",0,1,.01)),e.appendChild(n("Height","height",-5,5,.05)),e.appendChild(n("Resolution","resolution",1,256,1));const a=document.createElement("div");a.className="field";const o=document.createElement("label");o.textContent="Shader";const l=document.createElement("select");["fbm","billow","cellular"].forEach(m=>{const g=document.createElement("option");g.value=m,g.textContent=m.charAt(0).toUpperCase()+m.slice(1),i.mode===m&&(g.selected=!0),l.appendChild(g)}),l.addEventListener("change",()=>{i.mode=l.value,On(new L().copy($t.position).normalize())}),a.appendChild(o),a.appendChild(l),e.appendChild(a);const c=document.createElement("div");c.className="field";const u=document.createElement("label");u.textContent="Color";const d=document.createElement("input");d.type="color",d.value=i.color,d.addEventListener("input",()=>{i.color=d.value,On(new L().copy($t.position).normalize())}),c.appendChild(u),c.appendChild(d),e.appendChild(c);const f=document.createElement("button");return f.type="button",f.textContent="Remove layer",f.addEventListener("click",()=>{Mn=Mn.filter(m=>m!==i),Lo(),On(new L().copy($t.position).normalize())}),e.appendChild(f),e}function Lo(){Kl.innerHTML="";for(const i of Mn)Kl.appendChild(D_(i))}function L_(){const{innerWidth:i,innerHeight:e}=window;dt.aspect=i/e,dt.updateProjectionMatrix(),Vt.setSize(i,e),nt&&nt.setMode(yr()?"mobile":"desktop"),Wc()}function I_(){const i=f_.getDelta();if(ln(),Gn&&B_(),Ht.enabled?Ht.update(i):(_t&&!Yi&&(_t.rotation.y+=9e-4),Ze.update()),Wc(),Nn&&(io.time.value+=.016),nn&&(nn.material.uniforms.time.value+=.016),ys.length){const e=Math.min(i,.25);for(const t of ys){const n=t.userData.uniforms,r=t.userData.settings.speed||1;n.windOffset.value+=e*r*.3}}jt&&(ps.time.value+=.002),Vt.render(An,dt)}_s&&_s.addEventListener("click",()=>{Vc(!Ja.classList.contains("collapsed"))});document.addEventListener("surface",kc);function U_(i){if(!sa||!pr)return;const e=sa.style.display!=="block";sa.style.display=e?"block":"none",pr.setAttribute("aria-expanded",e.toString()),zi&&(zi.style.display=e?"none":"block")}pr&&pr.addEventListener("click",()=>U_());async function N_(){if(!(!navigator.xr||!Bn))try{aa=await navigator.xr.isSessionSupported("immersive-vr"),Bn.style.display=aa?"block":"none",Bn&&(Bn.disabled=!aa)}catch(i){console.warn("XR support check failed",i)}}async function F_(){if(!navigator.xr){Tt("WebXR not available");return}try{const i=await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor","bounded-floor"]});if(Gn=i,Vt.xr.enabled=!0,await Vt.xr.setSession(i),Ze&&(Ze.enabled=!1),_t&&!Ht.enabled){const e=((rt==null?void 0:rt.radius)??Co)*Po()+((rt==null?void 0:rt.heightScale)??0),t=Math.max(e*2,30),n=dt.position.clone().sub(Ze.target);n.lengthSq()<1e-6&&n.set(0,0,1),n.normalize();const s=new L(0,0,0),r=s.clone().sub(n.multiplyScalar(t));ni.position.copy(r),ni.lookAt(s),dt.position.set(0,0,0),dt.rotation.set(0,0,0)}Bn.textContent="Exit VR",Tt("VR session started"),i.addEventListener("end",()=>{Gn=null,no.clear(),Vt.xr.enabled=!1,ni.position.set(0,0,0),ni.rotation.set(0,0,0),ni.quaternion.identity(),Ze&&(Ze.enabled=!0),Bn.textContent="Enter VR",Tt("")})}catch(i){console.error(i),Tt("VR start failed")}}function O_(){Gn&&Gn.end()}function B_(){if(!Gn||!nt)return;let i=0,e=0;const t=.15;for(const n of Gn.inputSources){const s=n.gamepad;if(!s)continue;const r=no.get(n)||[],a=s.buttons||[],o=s.axes||[];o.length>=4&&(i=o[2],e=o[3]);const l=a.map(c=>!!c&&c.pressed);l[0]&&!r[0]&&nt.trigger("jump"),l[1]&&!r[1]&&nt.trigger("flyToggle"),l[3]&&!r[3]&&nt.trigger("exit"),no.set(n,l)}nt.setAction("forward",e>t),nt.setAction("backward",e<-t),nt.setAction("left",i>t),nt.setAction("right",i<-t)}Bn&&Bn.addEventListener("click",()=>{Gn?O_():F_()});Qa.addEventListener("click",()=>Do(Tn.value));const z_=[ts,ns,ci,En,hi,ui,is,di,fi,pi,wn,mi,gi,_i,ws,Sr];function tc(){Hn&&(ln(),rt&&(rt.planetDiameterKm=gr()),Gc(),Yi||Tt(`Planet diameter set to ${gr().toLocaleString()} km`))}function so(){Yi||(clearTimeout(to),to=setTimeout(()=>Do(Tn.value),400))}z_.forEach(i=>{i.addEventListener("input",()=>{ln(),ec(),so()}),i.addEventListener("change",()=>{ln(),ec(),so()})});Tn.addEventListener("change",()=>{Xc(Tn.value),Tt("Preset applied. Regenerating…"),so()});Hn&&(Hn.addEventListener("input",tc),Hn.addEventListener("change",tc));function nc(){ln(),P_(new L().copy($t.position).normalize())}function ic(){ln(),On(new L().copy($t.position).normalize())}[wn,os,As,Eo].forEach(i=>{i.addEventListener(i.type==="color"?"input":"change",nc),i.type==="range"&&i.addEventListener("input",nc)});[Oc,bo,To,wo,Ao,Bc,Ro,zc].forEach(i=>{i.addEventListener(i.type==="color"?"input":"change",ic),i.type==="range"&&i.addEventListener("input",ic)});d_.addEventListener("click",()=>{const i=Kc(),e=Mn.length?Mn[Mn.length-1].height:i.height,t={...i,id:`extra-${Date.now()}`,height:e+.3};Mn.push(t),Lo(),On(new L().copy($t.position).normalize())});window.addEventListener("resize",L_);[Wi,Xi,qi].forEach(i=>{i&&i.addEventListener("input",ln)});xs&&xs.addEventListener("change",ln);Xc(Tn.value);Do(Tn.value);Lo();p_();Vt.setAnimationLoop(I_);N_();
