@@ -295,7 +295,7 @@
       display: none;
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-Dx6EKeYt.js"></script>
+  <script type="module" crossorigin src="./assets/index-w2i6L2yl.js"></script>
 </head>
 <body>
   <div id="reticle" aria-hidden="true"></div>
@@ -499,7 +499,7 @@
           <input id="atmosphereColor" type="color" value="#4da8ff">
         </div>
         <div class="field">
-          <label><input type="checkbox" id="cloudToggle" checked> Cloud layer enabled</label>
+          <label><input type="checkbox" id="cloudToggle"> Cloud layer enabled</label>
         </div>
         <div class="field">
           <label for="cloudAlpha">Cloud alpha</label>
@@ -559,10 +559,27 @@
           <label><input type="checkbox" id="waterCycleToggle" checked> Water cycle enabled (WebGPU)</label>
         </div>
         <div class="field">
+          <label><input type="checkbox" id="waterCycleCloudToggle" checked> Water-cycle clouds (volumetric)</label>
+        </div>
+        <div class="field">
           <label><input type="checkbox" id="waterCycleRun" checked> Run simulation</label>
         </div>
         <div class="field">
           <button id="waterCycleStep" type="button">Step simulation</button>
+        </div>
+        <div class="field">
+          <label for="weatherSimMode">Weather sim</label>
+          <select id="weatherSimMode">
+            <option value="3d" selected>3D volume (experimental)</option>
+            <option value="2d">2D columns (legacy)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="weatherVolumeRes">Volume resolution (N)</label>
+          <div class="range-row">
+            <input id="weatherVolumeRes" type="range" min="32" max="128" step="16" value="64">
+            <span class="value" id="weatherVolumeResValue">64</span>
+          </div>
         </div>
         <div class="field">
           <label for="weatherDebug">Weather debug view</label>

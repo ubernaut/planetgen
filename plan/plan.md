@@ -18,6 +18,7 @@ llm instructions for this file: this file contains the high level project plan. 
     * v1.1: aux weather map (temp/snow/wind) + snowpack accumulation/melt + temp/snow/wind debug overlays (implemented)
     * v1.2: visual rain FX + rain haze + wind-advected cloud detail (implemented)
     * v1.3: configurable moisture layers (1–4) (implemented)
+    * v2: true 3D voxel atmosphere + volume-atlas clouds (in progress)
 
 * solar system section:
     * material distribution

@@ -163,3 +163,75 @@ Workgroup: `8×8` threads; dispatch `ceil(W/8) × ceil(H/8)`.
 - `Visual rain`: enables/disables GPU rain streaks near the camera (driven by the weather rain channel).
 - `Rain FX strength`: scales rain streak density/opacity and volume sizing.
 - `Rain haze`: boosts near-ground atmospheric haze in rainy regions.
+
+## v2 (Pivot): True 3D Voxel Atmosphere (Equal-Volume Cells)
+### Why pivot from 2D lat/lon columns
+- The 2D equirect grid has inherent **pole singularities** (longitude collapse) and produces artifacts when fields vary with longitude near the poles.
+- A real volumetric cloud field is better represented as a **3D grid**, which also helps with “clouds only visible from ground” (thin-shell path length issues from orbit).
+
+### Core idea
+- Simulate atmosphere as a **Cartesian voxel grid** over a cube centered on the planet.
+- Voxels are **equal size and volume everywhere**; we simulate only voxels inside a **spherical shell mask**:
+  - `rInner(dir) ≈ planetRadius + terrainHeight(dir)` (optionally start with `planetRadius` only for stability)
+  - `rOuter = planetRadius + atmoThickness`
+- WebGPU pattern: **read neighbors, write only your own cell** via **ping‑pong** buffers. This avoids race conditions and removes the need for locks/atomics for the core update.
+
+### Grid + atlas packing (GLSL-friendly)
+- Resolution configurable: `Nx × Ny × Nz` (start with cubic `N³`).
+  - Suggested defaults: `N=64` (262k voxels) or `N=80` (~512k) depending on GPU.
+- Physical extent: `extent = rOuter` in planet-local units (same space as cloud raymarch).
+- To render in WebGL/Three without `sampler3D`, pack Z slices into a **2D atlas**:
+  - `tilesX = ceil(sqrt(Nz))`, `tilesY = ceil(Nz / tilesX)`
+  - `atlasW = tilesX * Nx`, `atlasH = tilesY * Ny`
+  - Slice `z` maps to tile `(z % tilesX, z / tilesX)`; within-tile UV from `(x,y)`.
+
+### State per voxel (v2.0 minimal set)
+We keep it compact at first so performance scales with `N³`:
+- `T` (K): temperature proxy
+- `qv` (kg/kg): vapor
+- `qc` (kg/kg): cloud condensate
+- `qr` (kg/kg): precipitating water
+- `p` (Pa): pressure anomaly proxy (or derived diagnostic at first)
+- `vel` (m/s): `vx, vy, vz` (diagnostic wind is OK initially; later make it prognostic)
+- Optional later: aerosols/CCN, ice phase, turbulence/K, etc.
+
+### Update scheme (compute passes)
+Start stable with 2–3 passes; split only when necessary:
+1. **Advection (semi‑Lagrangian)**: backtrace using `vel` and sample `(T,qv,qc,qr)` from `stateSrc`.
+2. **Forcing + microphysics**:
+   - Radiative relaxation toward `Teq` (lat + insolation + altitude).
+   - **Evaporation**: inject `qv` into cells near the surface (within `Δr` of `rInner`) with strongest effect over sunlit oceans.
+   - **Condensation**: if `qv > qsat(T)` convert to `qc`, apply latent heating.
+   - **Autoconversion/precip**: convert `qc → qr` beyond threshold; apply `qr` decay.
+   - **Sedimentation**: move `qr` “down” (radially inward) by one voxel per step (or fractional via flux) and **deposit to surface** when hitting ground (update `soil`).
+3. **Dynamics (wind/pressure)** (start diagnostic, evolve to prognostic):
+   - Compute `p` target from `T/qv/alt`.
+   - Drive `vel` from `-∇p` + drag; add simple Coriolis using planet rotation.
+   - Buoyancy/convection: add upward `vy` where warm/moist; clamp + damp for stability.
+
+All passes use the same concurrency rule: **each invocation writes only its own voxel**.
+
+### Boundary conditions
+- Inside planet (`r < rInner`): clamp state to “solid” (no moisture; strong damping).
+- Above top of atmosphere (`r > rOuter`): clamp to vacuum; damp `vel`.
+- Near boundaries: use one-sided differences; apply damping layers to prevent reflections.
+
+### Outputs (for visuals + surface coupling)
+- **Cloud volume atlas RGBA8** (readback):
+  - `R`: cloud density (from `qc`, optionally combined with `qv` and vertical profile)
+  - `G`: rain intensity (from `qr`)
+  - `B`: optional (e.g. `p` or `T` for debug)
+  - `A`: optional (e.g. relative humidity)
+- **Surface 2D weather map** (separate pass or extracted at readback time):
+  - `rainSurface`, `soil`, `snow` (if ice phase enabled), and optionally `surfaceWind`.
+  - This keeps existing wetness shading / rain FX / rain haze working while clouds use the true 3D volume.
+
+### Debug + validation (v2)
+- Add “slice debug” (Z slice index) + “show shell mask” modes.
+- Budget checks: global sums of `(qv+qc+qr)` should be stable except for explicit sources/sinks.
+- Performance: measure ms per dispatch at `N=48/64/80` and adjust workgroup size (e.g. `4×4×4` or `8×4×4`).
+
+## Status / Changes
+- 2025-12-15: Started v2 pivot planning toward a true 3D voxel atmosphere (equal-volume cells + atlas-packed cloud volume) to eliminate pole artifacts and improve orbit visibility.
+- 2025-12-15: Implemented a first v2 prototype: `WaterCycleVolumeSystem` runs an N³ voxel atmosphere in WebGPU compute, outputs a slice-atlas 3D cloud volume plus derived 2D weather/aux maps, and water-cycle clouds now have their own toggle and can raymarch density by sampling the atlas in world-position space.
+- 2025-12-15: Fixed v2 low-resolution artifacts: treat voxels as intersecting the atmosphere shell (radial half-extent) so surface sampling isn’t biased cold, and clamp cloud raymarch to the shell segment so clouds are visible from orbit with stable step sizes.

@@ -454,8 +454,9 @@ export class PlanetForge {
 	                        
 	                        // Reduce snow on very steep cliffs (optional realism)
 	                        float snowStick = 1.0 - smoothstep(0.4, 0.6, vSlope); 
-	                        float dynSnow = wAux.g;
-	                        float snowAmt = max(max(snowBlend, pole * 0.8), dynSnow) * snowStick;
+	                        float landMask = step(sea, heightVal); // avoid snow coloring underwater; ocean ice is handled by water mesh
+	                        float dynSnow = wAux.g * landMask;
+	                        float snowAmt = landMask * max(max(snowBlend, pole * 0.8), dynSnow) * snowStick;
 	                        
 	                        col = mix(col, snow, snowAmt);
 
