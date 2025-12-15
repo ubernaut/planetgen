@@ -284,7 +284,7 @@ export class UIManager {
             seaLevel: this.clamp(parseFloat(els.seaLevel.value) || 0.5, 0, 1),
             atmosphere: this.clamp(parseFloat(els.atmosphere.value) || 0.35, 0.05, 1.5),
             atmosphereHeight: this.clamp(parseFloat(els.atmosphereHeight.value) || 0.5, 0, 5),
-            atmosphereAlpha: this.clamp(parseFloat(els.atmosphereAlpha.value) || 0.4, 0, 1),
+            atmosphereAlpha: this.clamp(parseFloat(els.atmosphereAlpha.value) || 1.0, 0, 1),
             atmosphereColor: els.atmosphereColor.value || '#4da8ff',
             atmosphereEnabled: els.atmosphereToggle.checked,
             smoothPasses: Math.round(this.clamp(parseFloat(els.smoothPasses.value) || 0, 0, 40)),

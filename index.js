@@ -3,6 +3,8 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 import { TinyPlanetControls } from './TinyPlanetControls.js';
 import { PlanetForge } from './worldgen.js';
 import { InputRouter } from './InputRouter.js';
+import { WaterCycleSystem } from './WaterCycleSystem.js';
+import { RainSystem } from './RainSystem.js';
 
 const canvas = document.getElementById('viewport');
 const hudEl = document.getElementById('hud');
@@ -59,6 +61,31 @@ const cloudResolutionValueEl = document.getElementById('cloudResolutionValue');
 const cloudShaderEl = document.getElementById('cloudShader');
 const cloudLayersEl = document.getElementById('cloudLayers');
 const addCloudLayerBtn = document.getElementById('addCloudLayer');
+const waterCycleToggleEl = document.getElementById('waterCycleToggle');
+const waterCycleRunEl = document.getElementById('waterCycleRun');
+const waterCycleStepBtn = document.getElementById('waterCycleStep');
+const weatherDebugEl = document.getElementById('weatherDebug');
+const weatherSpeedEl = document.getElementById('weatherSpeed');
+const weatherSpeedValueEl = document.getElementById('weatherSpeedValue');
+const weatherUpdateHzEl = document.getElementById('weatherUpdateHz');
+const weatherUpdateHzValueEl = document.getElementById('weatherUpdateHzValue');
+const weatherMoistureLayersEl = document.getElementById('weatherMoistureLayers');
+const weatherMoistureLayersValueEl = document.getElementById('weatherMoistureLayersValue');
+const weatherEvapEl = document.getElementById('weatherEvap');
+const weatherEvapValueEl = document.getElementById('weatherEvapValue');
+const weatherPrecipEl = document.getElementById('weatherPrecip');
+const weatherPrecipValueEl = document.getElementById('weatherPrecipValue');
+const weatherWindEl = document.getElementById('weatherWind');
+const weatherWindValueEl = document.getElementById('weatherWindValue');
+const weatherWetnessEl = document.getElementById('weatherWetness');
+const weatherWetnessValueEl = document.getElementById('weatherWetnessValue');
+const weatherOceanInertiaEl = document.getElementById('weatherOceanInertia');
+const weatherOceanInertiaValueEl = document.getElementById('weatherOceanInertiaValue');
+const weatherRainFxToggleEl = document.getElementById('weatherRainFxToggle');
+const weatherRainFxEl = document.getElementById('weatherRainFx');
+const weatherRainFxValueEl = document.getElementById('weatherRainFxValue');
+const weatherRainHazeEl = document.getElementById('weatherRainHaze');
+const weatherRainHazeValueEl = document.getElementById('weatherRainHazeValue');
 const movePadEl = document.getElementById('movePad');
 const lookPadEl = document.getElementById('lookPad');
 const mobileControlsEl = document.getElementById('mobileControls');
@@ -80,6 +107,32 @@ const planetDiameterValueEl = document.getElementById('planetDiameterValue');
 const DEFAULT_DIAMETER_KM = 1000;
 const PERSON_HEIGHT_M = 2;
 const BASE_RADIUS_UNITS = 10;
+
+const DEFAULT_WEATHER_TEX = (() => {
+    const data = new Uint8Array([110, 0, 128, 0]);
+    const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    return tex;
+})();
+
+const DEFAULT_WEATHER_AUX_TEX = (() => {
+    const data = new Uint8Array([160, 0, 128, 128]);
+    const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    return tex;
+})();
 
 const isMobileDevice = () => window.matchMedia('(max-width: 768px)').matches || /Mobi|Android|iP(ad|hone|od)|IEMobile|BlackBerry|Kindle|Silk|Opera Mini/i.test(navigator.userAgent || '');
 
@@ -142,12 +195,27 @@ let atmosphere = null;
 let clouds = [];
 let cloudLayerSettings = [];
 let lastPlanetSettings = null;
+let waterCycleSystem = null;
+let pendingWaterCycleSurface = null;
 let savedOrbitState = null;
 let xrSession = null;
 let xrPrevButtons = new Map();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let vrSupported = false;
+const weatherTmpQuat = new THREE.Quaternion();
+const weatherTmpMat4 = new THREE.Matrix4();
+const weatherInvRot = new THREE.Matrix3();
+const weatherSunWorld = new THREE.Vector3();
+const weatherSunLocal = new THREE.Vector3();
+const weatherTmpMat3 = new THREE.Matrix3();
+const weatherTmpVecA = new THREE.Vector3();
+const weatherTmpVecB = new THREE.Vector3();
+const weatherTmpVecC = new THREE.Vector3();
+const weatherTmpVecD = new THREE.Vector3();
+const weatherWindWorld = new THREE.Vector3();
+
+const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
 
 window.addEventListener('mousedown', (event) => {
     if (event.button === 1) { // Middle Click
@@ -219,7 +287,7 @@ const presets = {
         desymmetrizeTiling: true,
         atmosphere: 0.35,
         atmosphereHeight: 0.5,
-        atmosphereAlpha: 0.4,
+        atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
         faultType: 'ridge'
     },
@@ -241,7 +309,7 @@ const presets = {
         desymmetrizeTiling: true,
         atmosphere: 0.35,
         atmosphereHeight: 0.5,
-        atmosphereAlpha: 0.4,
+        atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
         faultType: 'mixed'
     },
@@ -263,7 +331,7 @@ const presets = {
         desymmetrizeTiling: true,
         atmosphere: 0.35,
         atmosphereHeight: 0.5,
-        atmosphereAlpha: 0.4,
+        atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
         faultType: 'ridge'
     }
@@ -376,10 +444,20 @@ const waterUniforms = {
     iceColor: { value: new THREE.Color(0xd9f1ff) }
 };
 const atmosphereUniforms = {
-    time: { value: 0 },
+    sunDir: { value: new THREE.Vector3(0, 1, 0) },
     glowColor: { value: new THREE.Color(0x4da8ff) },
-    thickness: { value: 0.35 },
-    alpha: { value: 0.4 }
+    alpha: { value: 1.0 },
+    density: { value: 6.0 },
+    weatherMap: { value: DEFAULT_WEATHER_TEX },
+    rainHaze: { value: 0.9 },
+    planetInvRot: { value: new THREE.Matrix3() },
+    planetInvScale: { value: 1.0 },
+    innerRadius: { value: BASE_RADIUS_UNITS },
+    outerRadius: { value: BASE_RADIUS_UNITS + 1 },
+    rayleighScaleHeight: { value: 0.25 }, // fraction of (outer-inner)
+    mieScaleHeight: { value: 0.08 }, // fraction of (outer-inner)
+    mieG: { value: 0.76 },
+    exposure: { value: 1.15 }
 };
 
 function clamp(v, min, max) {
@@ -394,6 +472,142 @@ function getPlanetDiameterKm() {
 
 function getPlanetScale() {
     return getPlanetDiameterKm() / DEFAULT_DIAMETER_KM;
+}
+
+function getWeatherTexture() {
+    if (waterCycleToggleEl?.checked && waterCycleSystem?.enabled && waterCycleSystem.ready && waterCycleSystem.hasSurface) {
+        return waterCycleSystem.getTexture();
+    }
+    return DEFAULT_WEATHER_TEX;
+}
+
+function getWeatherAuxTexture() {
+    if (waterCycleToggleEl?.checked && waterCycleSystem?.enabled && waterCycleSystem.ready && waterCycleSystem.hasSurface) {
+        return waterCycleSystem.getAuxTexture();
+    }
+    return DEFAULT_WEATHER_AUX_TEX;
+}
+
+function sampleDataTextureRGBA(tex, u, v) {
+    const img = tex?.image;
+    const data = img?.data;
+    const w = img?.width ?? 0;
+    const h = img?.height ?? 0;
+    if (!data || !w || !h) return { r: 0, g: 0, b: 0, a: 0 };
+
+    const uu = ((u % 1) + 1) % 1;
+    const vv = clamp(v, 0, 1);
+    const x = Math.min(w - 1, Math.floor(uu * w));
+    const y = Math.min(h - 1, Math.floor(vv * h));
+    const i = (y * w + x) * 4;
+    return { r: data[i] ?? 0, g: data[i + 1] ?? 0, b: data[i + 2] ?? 0, a: data[i + 3] ?? 0 };
+}
+
+function computeWindWorldFromAux(tex, invScale, planetInvRot, out) {
+    if (!tex?.image?.data || !planetInvRot) {
+        (out ?? weatherWindWorld).set(0, 0, 0);
+        return out ?? weatherWindWorld;
+    }
+
+    // Camera direction in planet-local unscaled coordinates.
+    weatherTmpVecA.copy(camera.position).multiplyScalar(invScale).applyMatrix3(planetInvRot);
+    if (weatherTmpVecA.lengthSq() < 1e-12) {
+        (out ?? weatherWindWorld).set(0, 0, 0);
+        return out ?? weatherWindWorld;
+    }
+    const dirLocal = weatherTmpVecA.normalize();
+    const u = Math.atan2(dirLocal.z, dirLocal.x) / (2 * Math.PI) + 0.5;
+    const v = Math.asin(clamp(dirLocal.y, -1, 1)) / Math.PI + 0.5;
+    const px = sampleDataTextureRGBA(tex, u, v);
+    const uNorm = ((px.b ?? 128) / 255 - 0.5) * 2;
+    const vNorm = ((px.a ?? 128) / 255 - 0.5) * 2;
+
+    // Local tangent basis (east/north).
+    weatherTmpVecB.set(-dirLocal.z, 0, dirLocal.x);
+    if (weatherTmpVecB.lengthSq() < 1e-8) weatherTmpVecB.set(1, 0, 0);
+    weatherTmpVecB.normalize();
+    weatherTmpVecC.crossVectors(dirLocal, weatherTmpVecB).normalize();
+
+    // Wind vector in planet-local (tangent plane).
+    weatherTmpVecD.copy(weatherTmpVecB).multiplyScalar(uNorm).addScaledVector(weatherTmpVecC, vNorm);
+
+    // Rotate into world space (rot = transpose(invRot) for pure rotation).
+    weatherTmpMat3.copy(planetInvRot).transpose();
+    const windWorld = (out ?? weatherWindWorld).copy(weatherTmpVecD).applyMatrix3(weatherTmpMat3);
+
+    // Keep mostly tangent at the camera location.
+    const upWorld = weatherTmpVecA.copy(camera.position).normalize();
+    windWorld.addScaledVector(upWorld, -windWorld.dot(upWorld));
+
+    // Clamp magnitude and avoid NaNs.
+    const len = windWorld.length();
+    if (!(len > 1e-6)) windWorld.set(0, 0, 0);
+    else {
+        const mag = Math.min(1.0, len);
+        windWorld.multiplyScalar(mag / len);
+    }
+    return windWorld;
+}
+
+function setPlanetWeatherTexture(texture) {
+    if (!planet) return;
+    const material = planet.material;
+    if (!material?.userData) return;
+    if (material.userData.weather) {
+        material.userData.weather.texture = texture;
+    }
+    if (material.userData.shader?.uniforms?.uWeatherMap) {
+        material.userData.shader.uniforms.uWeatherMap.value = texture;
+    }
+}
+
+function setPlanetWeatherAuxTexture(texture) {
+    if (!planet) return;
+    const material = planet.material;
+    if (!material?.userData) return;
+    if (material.userData.weather) {
+        material.userData.weather.auxTexture = texture;
+    }
+    if (material.userData.shader?.uniforms?.uWeatherAuxMap) {
+        material.userData.shader.uniforms.uWeatherAuxMap.value = texture;
+    }
+}
+
+function setPlanetWeatherStrength(strength) {
+    if (!planet) return;
+    const material = planet.material;
+    if (!material?.userData) return;
+    if (material.userData.weather) {
+        material.userData.weather.strength = strength;
+    }
+    if (material.userData.shader?.uniforms?.uWeatherStrength) {
+        material.userData.shader.uniforms.uWeatherStrength.value = strength;
+    }
+}
+
+function setPlanetWeatherDebugMode(mode) {
+    if (!planet) return;
+    const material = planet.material;
+    if (!material?.userData) return;
+    if (material.userData.weather) {
+        material.userData.weather.debug = mode;
+    }
+    if (material.userData.shader?.uniforms?.uWeatherDebug) {
+        material.userData.shader.uniforms.uWeatherDebug.value = mode;
+    }
+}
+
+function syncWaterCycleSurfaceFromForge(forge, settings) {
+    if (!forge || !settings) return;
+    const planetRadiusM = (settings.planetDiameterKm ?? getPlanetDiameterKm()) * 1000 * 0.5;
+    const args = { heightmap: forge.data, size: forge.size, seaLevel: settings.seaLevel, planetRadiusM };
+    if (waterCycleSystem?.enabled && waterCycleSystem.ready) {
+        waterCycleSystem.setPlanetSurface(args);
+        setPlanetWeatherTexture(getWeatherTexture());
+        setPlanetWeatherAuxTexture(getWeatherAuxTexture());
+    } else {
+        pendingWaterCycleSurface = args;
+    }
 }
 
 function getPersonHeightUnits() {
@@ -486,6 +700,16 @@ function updateRangeLabels() {
     cloudQuantityValueEl.textContent = Number(cloudQuantityEl.value).toFixed(2);
     cloudHeightValueEl.textContent = Number(cloudHeightEl.value).toFixed(2);
     cloudResolutionValueEl.textContent = Number(cloudResolutionEl.value).toFixed(0);
+    if (weatherSpeedEl && weatherSpeedValueEl) weatherSpeedValueEl.textContent = Number(weatherSpeedEl.value).toFixed(0);
+    if (weatherUpdateHzEl && weatherUpdateHzValueEl) weatherUpdateHzValueEl.textContent = Number(weatherUpdateHzEl.value).toFixed(0);
+    if (weatherMoistureLayersEl && weatherMoistureLayersValueEl) weatherMoistureLayersValueEl.textContent = Number(weatherMoistureLayersEl.value).toFixed(0);
+    if (weatherEvapEl && weatherEvapValueEl) weatherEvapValueEl.textContent = Number(weatherEvapEl.value).toFixed(2);
+    if (weatherPrecipEl && weatherPrecipValueEl) weatherPrecipValueEl.textContent = Number(weatherPrecipEl.value).toFixed(2);
+    if (weatherWindEl && weatherWindValueEl) weatherWindValueEl.textContent = Number(weatherWindEl.value).toFixed(2);
+    if (weatherWetnessEl && weatherWetnessValueEl) weatherWetnessValueEl.textContent = Number(weatherWetnessEl.value).toFixed(2);
+    if (weatherOceanInertiaEl && weatherOceanInertiaValueEl) weatherOceanInertiaValueEl.textContent = Number(weatherOceanInertiaEl.value).toFixed(2);
+    if (weatherRainFxEl && weatherRainFxValueEl) weatherRainFxValueEl.textContent = Number(weatherRainFxEl.value).toFixed(2);
+    if (weatherRainHazeEl && weatherRainHazeValueEl) weatherRainHazeValueEl.textContent = Number(weatherRainHazeEl.value).toFixed(2);
     if (planetDiameterEl && planetDiameterValueEl) {
         planetDiameterValueEl.textContent = Number(planetDiameterEl.value).toFixed(0);
     }
@@ -513,7 +737,7 @@ function applyPreset(key) {
     seaLevelEl.value = preset.seaLevel ?? 0.53;
     atmosphereEl.value = preset.atmosphere ?? 0.35;
     atmosphereHeightEl.value = preset.atmosphereHeight ?? 0.5;
-    atmosphereAlphaEl.value = preset.atmosphereAlpha ?? 0.4;
+    atmosphereAlphaEl.value = preset.atmosphereAlpha ?? 1.0;
     atmosphereColorEl.value = preset.atmosphereColor || '#4da8ff';
     smoothPassesEl.value = preset.smoothPasses ?? 20;
     subdivisionsEl.value = preset.subdivisions ?? 60;
@@ -537,7 +761,7 @@ function readSettings() {
         seaLevel: clamp(parseFloat(seaLevelEl.value) || 0.5, 0, 1),
         atmosphere: clamp(parseFloat(atmosphereEl.value) || 0.35, 0.05, 1.5),
         atmosphereHeight: clamp(parseFloat(atmosphereHeightEl.value) || 0.5, 0, 5),
-        atmosphereAlpha: clamp(parseFloat(atmosphereAlphaEl.value) || 0.4, 0, 1),
+        atmosphereAlpha: clamp(parseFloat(atmosphereAlphaEl.value) || 1.0, 0, 1),
         atmosphereColor: atmosphereColorEl.value || '#4da8ff',
         smoothPasses: Math.round(clamp(parseFloat(smoothPassesEl.value) || 0, 0, 40)),
         subdivisions: Math.round(clamp(parseFloat(subdivisionsEl.value) || 128, 0, 512)),
@@ -673,11 +897,23 @@ async function generateWorld(presetKey) {
         await nextFrame();
 
         lastPlanetSettings = { ...settings, planetDiameterKm: getPlanetDiameterKm() };
-        const mesh = forge.createMesh(settings.radius, settings.heightScale, settings.seaLevel, settings.subdivisions, settings.iceCap);
+        syncWaterCycleSurfaceFromForge(forge, lastPlanetSettings);
+        const mesh = forge.createMesh(
+            settings.radius,
+            settings.heightScale,
+            settings.seaLevel,
+            settings.subdivisions,
+            settings.iceCap,
+            getWeatherTexture(),
+            getWeatherAuxTexture()
+        );
         mesh.userData.forge = forge;
         mesh.userData.settings = settings;
         mesh.rotation.x = 0.25;
         replacePlanet(mesh);
+        setPlanetWeatherTexture(getWeatherTexture());
+        setPlanetWeatherAuxTexture(getWeatherAuxTexture());
+        applyWaterCycleConfig();
         replaceWater(buildWaterMesh(settings.radius, settings.subdivisions, settings.seaLevel, settings.heightScale, settings.iceCap));
         replaceFreshwater(forge.createFreshwaterMesh(settings.radius, settings.heightScale, settings.seaLevel, settings.subdivisions));
         const sunDir = new THREE.Vector3().copy(dirLight.position).normalize();
@@ -765,7 +1001,8 @@ function replaceAtmosphere(mesh) {
         planetGroup.remove(atmosphere);
     }
     atmosphere = mesh;
-    atmosphere.renderOrder = 3;
+    // Draw before clouds so scattering doesn't wash out volumetric clouds (clouds don't write depth).
+    atmosphere.renderOrder = 1;
     planetGroup.add(mesh);
 }
 
@@ -864,10 +1101,14 @@ function buildWaterMesh(radius, subdivisions, seaLevel, heightScale, iceCap) {
 
 function buildAtmosphereMesh(radius, subdivisions, heightScale, heightOffset, thickness, sunDir, alpha, colorHex) {
     const outerRadius = radius + heightOffset + Math.max(0.05, thickness) * heightScale;
-    atmosphereUniforms.thickness.value = Math.max(0.05, thickness);
     atmosphereUniforms.alpha.value = alpha;
     atmosphereUniforms.glowColor.value = new THREE.Color(colorHex);
-    const geometry = new THREE.IcosahedronGeometry(outerRadius, Math.max(0, Math.floor(subdivisions)));
+    atmosphereUniforms.sunDir.value = sunDir.clone().normalize();
+    atmosphereUniforms.innerRadius.value = radius;
+    atmosphereUniforms.outerRadius.value = outerRadius;
+
+    const detail = Math.max(2, Math.min(6, Math.floor(subdivisions / 24)));
+    const geometry = new THREE.IcosahedronGeometry(outerRadius, detail);
     const material = new THREE.ShaderMaterial({
         uniforms: atmosphereUniforms,
         transparent: true,
@@ -877,10 +1118,8 @@ function buildAtmosphereMesh(radius, subdivisions, heightScale, heightOffset, th
         vertexShader: `
             #include <common>
             #include <logdepthbuf_pars_vertex>
-            varying vec3 vNormal;
             varying vec3 vWorld;
             void main() {
-                vNormal = normalize(normalMatrix * normal);
                 vec4 worldPos = modelMatrix * vec4(position, 1.0);
                 vWorld = worldPos.xyz;
                 gl_Position = projectionMatrix * viewMatrix * worldPos;
@@ -890,19 +1129,145 @@ function buildAtmosphereMesh(radius, subdivisions, heightScale, heightOffset, th
         fragmentShader: `
             #include <common>
             #include <logdepthbuf_pars_fragment>
-            uniform vec3 glowColor;
-            uniform float thickness;
             uniform float alpha;
-            varying vec3 vNormal;
+            uniform float density;
+            uniform vec3 glowColor;
+            uniform vec3 sunDir;
+            uniform sampler2D weatherMap;
+            uniform float rainHaze;
+            uniform mat3 planetInvRot;
+            uniform float planetInvScale;
+            uniform float innerRadius;
+            uniform float outerRadius;
+            uniform float rayleighScaleHeight;
+            uniform float mieScaleHeight;
+            uniform float mieG;
+            uniform float exposure;
             varying vec3 vWorld;
+
+            vec2 raySphere(vec3 ro, vec3 rd, float r) {
+                float b = dot(ro, rd);
+                float c = dot(ro, ro) - r * r;
+                float h = b * b - c;
+                if (h < 0.0) return vec2(1e9, -1e9);
+                h = sqrt(h);
+                return vec2(-b - h, -b + h);
+            }
+
+            float phaseRayleigh(float mu) {
+                return 3.0 / (16.0 * PI) * (1.0 + mu * mu);
+            }
+
+            float phaseMie(float mu, float g) {
+                float g2 = g * g;
+                float denom = pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
+                return (1.0 - g2) / (4.0 * PI * denom);
+            }
+
+            vec3 exp3(vec3 v) {
+                return vec3(exp(-v.x), exp(-v.y), exp(-v.z));
+            }
+
             void main() {
                 #include <logdepthbuf_fragment>
-                vec3 viewDir = normalize(cameraPosition - vWorld);
-                float rim = pow(1.0 - max(dot(viewDir, normalize(vNormal)), 0.0), 3.0);
-                float fade = smoothstep(0.0, 1.0, thickness);
-                float a = rim * fade * alpha * 0.9;
-                if(a < 0.01) discard;
-                gl_FragColor = vec4(glowColor, a);
+
+                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
+                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
+                vec3 rd = normalize(p1 - ro);
+                float tFrag = length(p1 - ro);
+
+                vec3 sunLocal = normalize(planetInvRot * sunDir);
+                vec3 viewDirLocal = normalize(p1);
+                float wu = atan(viewDirLocal.z, viewDirLocal.x) / (2.0 * PI) + 0.5;
+                float wv = asin(clamp(viewDirLocal.y, -1.0, 1.0)) / PI + 0.5;
+                float rainDir = texture2D(weatherMap, vec2(wu, wv)).g;
+
+                vec2 tOuter = raySphere(ro, rd, outerRadius);
+                float tStart = max(tOuter.x, 0.0);
+                float tEnd = min(tOuter.y, tFrag);
+                if (tEnd <= tStart) discard;
+
+                vec2 tInner = raySphere(ro, rd, innerRadius);
+                if (tInner.x > 0.0) {
+                    tEnd = min(tEnd, tInner.x);
+                }
+                if (tEnd <= tStart) discard;
+
+                float atmoH = max(outerRadius - innerRadius, 1e-3);
+                float HR = max(atmoH * rayleighScaleHeight, 1e-4);
+                float HM = max(atmoH * mieScaleHeight, 1e-4);
+                float rainM = clamp(rainDir * rainHaze, 0.0, 2.0);
+                HM = max(HM / (1.0 + rainM * 0.9), 1e-4); // concentrate haze near ground
+
+                // Wavelength-weighted Rayleigh coefficients (scaled for our unit system)
+                vec3 betaR = vec3(5.8e-3, 13.5e-3, 33.1e-3);
+                // Use glowColor as a tint/bias for Rayleigh (keeps UI meaningful)
+                betaR *= mix(vec3(0.75), glowColor, 0.85);
+
+                betaR *= density;
+                float betaM = 21e-3 * density;
+                betaM *= (1.0 + rainM * 1.35);
+
+                const int PRIMARY_STEPS = 8;
+                const int LIGHT_STEPS = 4;
+
+                float segLen = (tEnd - tStart) / float(PRIMARY_STEPS);
+                float optR = 0.0;
+                float optM = 0.0;
+                vec3 sumR = vec3(0.0);
+                vec3 sumM = vec3(0.0);
+
+                for (int i = 0; i < PRIMARY_STEPS; i++) {
+                    float t = tStart + (float(i) + 0.5) * segLen;
+                    vec3 pos = ro + rd * t;
+                    float height = max(length(pos) - innerRadius, 0.0);
+                    float dR = exp(-height / HR);
+                    float dM = exp(-height / HM);
+
+                    optR += dR * segLen;
+                    optM += dM * segLen;
+
+                    vec2 tSunOuter = raySphere(pos, sunLocal, outerRadius);
+                    float tSunEnd = tSunOuter.y;
+                    if (tSunEnd <= 0.0) continue;
+
+                    vec2 tSunInner = raySphere(pos, sunLocal, innerRadius);
+                    float shadow = 1.0;
+                    if (tSunInner.x > 0.0 && tSunInner.x < tSunEnd) {
+                        shadow = 0.0;
+                    }
+
+                    float segL = tSunEnd / float(LIGHT_STEPS);
+                    float optSunR = 0.0;
+                    float optSunM = 0.0;
+                    for (int j = 0; j < LIGHT_STEPS; j++) {
+                        float tl = (float(j) + 0.5) * segL;
+                        vec3 pl = pos + sunLocal * tl;
+                        float hL = max(length(pl) - innerRadius, 0.0);
+                        optSunR += exp(-hL / HR) * segL;
+                        optSunM += exp(-hL / HM) * segL;
+                    }
+
+                    vec3 tau = betaR * (optR + optSunR) + vec3(betaM * (optM + optSunM));
+                    vec3 trans = exp3(tau);
+                    trans *= shadow;
+
+                    sumR += trans * dR * segLen;
+                    sumM += trans * dM * segLen;
+                }
+
+                float mu = dot(rd, sunLocal);
+                float pR = phaseRayleigh(mu);
+                float pM = phaseMie(mu, mieG);
+
+                vec3 radiance = (betaR * sumR * pR + vec3(betaM) * sumM * pM) * 18.0;
+                radiance = vec3(1.0) - exp(-radiance * exposure);
+                radiance *= alpha;
+
+                float lum = max(radiance.r, max(radiance.g, radiance.b));
+                if (lum < 0.002) discard;
+
+                gl_FragColor = vec4(radiance, 1.0);
             }
         `
     });
@@ -910,97 +1275,45 @@ function buildAtmosphereMesh(radius, subdivisions, heightScale, heightOffset, th
 }
 
 function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel, heightScale, settings) {
-    const cloudRadius = Math.max(0.1, radius + settings.height);
+    const baseRadius = Math.max(0.1, radius + settings.height);
+    const thickness = Math.max(0.25, heightScale * 0.03);
+    const minInner = planetRadius + ((seaLevel - 0.5) * heightScale) + 0.05;
+    const innerRadius = Math.max(minInner, baseRadius - thickness);
+    const outerRadius = Math.max(innerRadius + 0.05, baseRadius + thickness);
+
     const modeId = settings.mode === 'billow' ? 1 : settings.mode === 'cellular' ? 2 : 0;
     const uniforms = {
-        time: { value: 0 },
         windOffset: { value: 0 },
         color: { value: new THREE.Color(settings.color) },
         opacity: { value: settings.alpha },
-        sunDir: { value: sunDir.clone().normalize() },
+        sunDir: { value: sunDir.clone().normalize() }, // world-space; converted in shader via planetInvRot
         windDir: { value: new THREE.Vector3(0, 0, 1) },
-        planetRadius: { value: planetRadius },
-        seaLevel: { value: seaLevel },
-        heightScale: { value: heightScale },
-        speed: { value: settings.speed },
         quantity: { value: settings.quantity },
-        noiseScale: { value: Math.max(0.1, settings.resolution) },
-        mode: { value: modeId }
+        noiseScale: { value: Math.max(1, settings.resolution) },
+        mode: { value: modeId },
+        weatherMap: { value: getWeatherTexture() },
+        weatherAuxMap: { value: getWeatherAuxTexture() },
+        planetInvRot: { value: new THREE.Matrix3() },
+        planetInvScale: { value: 1.0 },
+        innerRadius: { value: innerRadius },
+        outerRadius: { value: outerRadius }
     };
-    const geometry = new THREE.IcosahedronGeometry(cloudRadius, Math.max(1, Math.floor(baseSubdivisions * 0.5)));
+
+    const detail = Math.max(2, Math.min(6, Math.floor(baseSubdivisions / 24)));
+    const geometry = new THREE.IcosahedronGeometry(outerRadius, detail);
     const material = new THREE.ShaderMaterial({
         uniforms,
         transparent: true,
         depthWrite: false,
-        side: THREE.FrontSide,
+        side: THREE.DoubleSide,
         blending: THREE.NormalBlending,
         vertexShader: `
             #include <common>
             #include <logdepthbuf_pars_vertex>
-            uniform float time;
-            uniform float windOffset;
-            uniform vec3 sunDir;
-            uniform vec3 windDir;
-            uniform float planetRadius;
-            uniform float seaLevel;
-            uniform float heightScale;
-            uniform float quantity;
-            uniform float noiseScale;
-            uniform float mode;
             varying vec3 vWorld;
-            varying vec3 vNormal;
-            // 3D noise helpers
-            float hash(vec3 p) {
-                p = fract(p * 0.3183099 + vec3(0.1,0.2,0.3));
-                p *= 17.0;
-                return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-            }
-            float noise(vec3 p) {
-                vec3 i = floor(p);
-                vec3 f = fract(p);
-                f = f*f*(3.0-2.0*f);
-                float n000 = hash(i + vec3(0,0,0));
-                float n100 = hash(i + vec3(1,0,0));
-                float n010 = hash(i + vec3(0,1,0));
-                float n110 = hash(i + vec3(1,1,0));
-                float n001 = hash(i + vec3(0,0,1));
-                float n101 = hash(i + vec3(1,0,1));
-                float n011 = hash(i + vec3(0,1,1));
-                float n111 = hash(i + vec3(1,1,1));
-                float nx00 = mix(n000, n100, f.x);
-                float nx10 = mix(n010, n110, f.x);
-                float nx01 = mix(n001, n101, f.x);
-                float nx11 = mix(n011, n111, f.x);
-                float nxy0 = mix(nx00, nx10, f.y);
-                float nxy1 = mix(nx01, nx11, f.y);
-                return mix(nxy0, nxy1, f.z);
-            }
-            float fbm(vec3 p) {
-                float sum = 0.0;
-                float amp = 0.5;
-                for(int i=0;i<4;i++){
-                    sum += noise(p) * amp;
-                    p *= 2.1;
-                    amp *= 0.5;
-                }
-                return sum;
-            }
             void main() {
-                vec3 pos = position;
-                vec3 dir = normalize(pos);
-                float base = fbm(dir * (noiseScale * 0.05) + windDir * windOffset);
-                float n = base;
-                if (mode > 0.5 && mode < 1.5) {
-                    n = abs(base) * 2.0 - 1.0;
-                } else if (mode > 1.5) {
-                    vec3 q = floor(dir * noiseScale);
-                    float c = fract(sin(dot(q, vec3(12.9898,78.233,45.164))) * 43758.5453);
-                    n = mix(base, c * 2.0 - 1.0, 0.5);
-                }
-                pos += normal * n * 0.35;
-                vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+                vec4 worldPos = modelMatrix * vec4(position, 1.0);
                 vWorld = worldPos.xyz;
-                vNormal = normalize(normalMatrix * normalize(pos));
                 gl_Position = projectionMatrix * viewMatrix * worldPos;
                 #include <logdepthbuf_vertex>
             }
@@ -1010,18 +1323,20 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
             #include <logdepthbuf_pars_fragment>
             uniform vec3 color;
             uniform float opacity;
-            uniform float time;
             uniform float windOffset;
             uniform vec3 sunDir;
             uniform vec3 windDir;
-            uniform float planetRadius;
-            uniform float seaLevel;
-            uniform float heightScale;
             uniform float quantity;
             uniform float noiseScale;
             uniform float mode;
+            uniform sampler2D weatherMap;
+            uniform sampler2D weatherAuxMap;
+            uniform mat3 planetInvRot;
+            uniform float planetInvScale;
+            uniform float innerRadius;
+            uniform float outerRadius;
             varying vec3 vWorld;
-            varying vec3 vNormal;
+
             float hash(vec3 p) {
                 p = fract(p * 0.3183099 + vec3(0.1,0.2,0.3));
                 p *= 17.0;
@@ -1049,7 +1364,7 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
             }
             float fbm(vec3 p) {
                 float sum = 0.0;
-                float amp = 0.5;
+                float amp = 0.55;
                 for(int i=0;i<4;i++){
                     sum += noise(p) * amp;
                     p *= 2.1;
@@ -1057,27 +1372,94 @@ function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel
                 }
                 return sum;
             }
+
+            float densityAt(vec3 pos, out float rainOut) {
+                float r = length(pos);
+                if (r < innerRadius || r > outerRadius) { rainOut = 0.0; return 0.0; }
+                float h = (r - innerRadius) / max(outerRadius - innerRadius, 1e-3);
+                float profile = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.55, 1.0, h));
+
+                vec3 dir = pos / max(r, 1e-6);
+                float u = atan(dir.z, dir.x) / (2.0 * 3.14159265) + 0.5;
+                float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265 + 0.5;
+                vec4 w = texture2D(weatherMap, vec2(u, v));
+                vec4 wa = texture2D(weatherAuxMap, vec2(u, v));
+                float cloud = w.r;
+                float rain = w.g;
+                rainOut = rain;
+
+                float cover = cloud * (0.45 + quantity * 1.1);
+
+                float freq = max(1.0, noiseScale) * 0.003;
+                vec2 windUV = (wa.ba - 0.5) * 2.0;
+                vec3 east = vec3(-dir.z, 0.0, dir.x);
+                float el = length(east);
+                east = (el < 1e-5) ? vec3(1.0, 0.0, 0.0) : (east / el);
+                vec3 north = normalize(cross(dir, east));
+                vec3 windVec = east * windUV.x + north * windUV.y;
+                float wMag = clamp(length(windUV), 0.0, 1.0);
+                vec3 advDir = normalize(mix(windDir, windVec, 0.75));
+                vec3 np = pos * freq + advDir * (windOffset * (0.35 + 1.05 * wMag));
+                float n = fbm(np);
+                if (mode > 0.5 && mode < 1.5) {
+                    n = abs(n) * 2.0 - 1.0;
+                } else if (mode > 1.5) {
+                    vec3 q = floor(np * 0.9);
+                    float c = fract(sin(dot(q, vec3(12.9898,78.233,45.164))) * 43758.5453);
+                    n = mix(n, c * 2.0 - 1.0, 0.55);
+                }
+                float detail = smoothstep(0.15, 0.75, n + 0.2);
+                float d = cover * profile * detail;
+                d *= mix(1.0, 1.25, rain);
+                return d;
+            }
+
             void main() {
                 #include <logdepthbuf_fragment>
-                vec3 dir = normalize(vWorld);
-                float day = clamp(dot(dir, normalize(sunDir)), 0.0, 1.0);
-                float lat = 1.0 - abs(dir.y);
-                float base = fbm(dir * (noiseScale * 0.02 + 0.6) + windDir * windOffset + vec3(0.0, windOffset * 0.07, 0.0));
-                float n = base;
-                if (mode > 0.5 && mode < 1.5) {
-                    n = abs(base) * 2.0 - 1.0;
-                } else if (mode > 1.5) {
-                    vec3 q = floor(dir * noiseScale);
-                    float c = fract(sin(dot(q, vec3(12.9898,78.233,45.164))) * 43758.5453);
-                    n = mix(base, c * 2.0 - 1.0, 0.5);
+
+                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
+                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
+                vec3 rd = normalize(p1 - ro);
+
+                float b = dot(ro, rd);
+                float c = dot(ro, ro) - outerRadius * outerRadius;
+                float h = b*b - c;
+                if (h < 0.0) discard;
+                h = sqrt(h);
+                float t0 = -b - h;
+                float t1 = -b + h;
+                float tStart = max(t0, 0.0);
+                float tEnd = t1;
+                if (tEnd <= tStart) discard;
+
+                const int STEPS = 18;
+                float stepSize = (tEnd - tStart) / float(STEPS);
+                vec3 sum = vec3(0.0);
+                float alpha = 0.0;
+
+                vec3 sunLocal = normalize(planetInvRot * sunDir);
+
+                for (int i = 0; i < STEPS; i++) {
+                    float t = tStart + (float(i) + 0.5) * stepSize;
+                    vec3 pos = ro + rd * t;
+
+                    float rainNow = 0.0;
+                    float d = densityAt(pos, rainNow);
+                    if (d <= 1e-4) continue;
+
+                    float day = clamp(dot(normalize(pos), sunLocal), 0.0, 1.0);
+                    float light = mix(0.55, 1.15, day);
+                    vec3 ccol = mix(color, color * 0.85, rainNow) * light;
+
+                    float a = clamp(d * stepSize * 0.22, 0.0, 1.0);
+                    sum += (1.0 - alpha) * ccol * a;
+                    alpha += (1.0 - alpha) * a;
+                    if (alpha > 0.985) break;
                 }
-                float coverage = n + lat * 0.2 + day * 0.25;
-                coverage += (quantity - 0.5) * 0.8;
-                float alpha = smoothstep(0.48, 0.68, coverage) * opacity;
-                if(alpha < 0.01) discard;
-                vec3 viewDir = normalize(cameraPosition - vWorld);
-                float fresnel = pow(1.0 - max(dot(viewDir, vNormal), 0.0), 2.0);
-                gl_FragColor = vec4(color * (0.8 + fresnel * 0.4), alpha);
+
+                alpha *= opacity;
+                if (alpha < 0.01) discard;
+                gl_FragColor = vec4(sum, alpha);
             }
         `
     });
@@ -1143,7 +1525,7 @@ function updateAtmosphereVisuals(sunDir) {
     }
     const thickness = clamp(parseFloat(atmosphereEl.value) || 0.35, 0.05, 1.5);
     const heightOffset = clamp(parseFloat(atmosphereHeightEl.value) || 0.5, 0, 5);
-    const alpha = clamp(parseFloat(atmosphereAlphaEl.value) || 0.4, 0, 1);
+    const alpha = clamp(parseFloat(atmosphereAlphaEl.value) || 1.0, 0, 1);
     const color = atmosphereColorEl.value || '#4da8ff';
     replaceAtmosphere(
         buildAtmosphereMesh(
@@ -1283,6 +1665,23 @@ function onResize() {
     syncMobileVisibility();
 }
 
+function updateWeatherFrame() {
+    const invScale = planetGroup.scale.x ? (1 / planetGroup.scale.x) : 1;
+
+    weatherSunWorld.copy(dirLight.position).normalize();
+    weatherInvRot.identity();
+    weatherSunLocal.copy(weatherSunWorld);
+    if (planet) {
+        planet.getWorldQuaternion(weatherTmpQuat);
+        weatherTmpQuat.invert();
+        weatherTmpMat4.makeRotationFromQuaternion(weatherTmpQuat);
+        weatherInvRot.setFromMatrix4(weatherTmpMat4);
+        weatherSunLocal.copy(weatherSunWorld).applyQuaternion(weatherTmpQuat).normalize();
+    }
+
+    return invScale;
+}
+
 function animate() {
     const delta = clock.getDelta();
     
@@ -1302,10 +1701,25 @@ function animate() {
     }
     syncMobileVisibility();
 
+    // Planet-local sun direction (for water cycle + cloud sampling)
+    const invScale = updateWeatherFrame();
+    const runWeather = (waterCycleToggleEl?.checked ?? false) && (waterCycleRunEl?.checked ?? true);
+    if (runWeather && waterCycleSystem?.enabled) {
+        waterCycleSystem.update(delta, weatherSunLocal);
+    }
+
+    // Atmosphere scattering operates in planet-local + unscaled coordinates.
+    atmosphereUniforms.sunDir.value.copy(weatherSunWorld);
+    atmosphereUniforms.planetInvRot.value.copy(weatherInvRot);
+    atmosphereUniforms.planetInvScale.value = invScale;
+    atmosphereUniforms.weatherMap.value = getWeatherTexture();
+
     if (water) waterUniforms.time.value += 0.016;
     if (freshwater) freshwater.material.uniforms.time.value += 0.016;
     if (clouds.length) {
         const dt = Math.min(delta, 0.25); // avoid huge jumps after tab inactivity
+        const weatherTex = getWeatherTexture();
+        const weatherAuxTex = getWeatherAuxTexture();
         for (const mesh of clouds) {
             const u = mesh.userData.uniforms;
             const s = mesh.userData.settings;
@@ -1313,9 +1727,22 @@ function animate() {
             // Accumulate wind offset at constant rate controlled by speed slider
             // Wind direction is constant (set at creation) - no rotation to avoid spiral acceleration
             u.windOffset.value += dt * speed * 0.3;
+            if (u.planetInvRot) u.planetInvRot.value.copy(weatherInvRot);
+            if (u.planetInvScale) u.planetInvScale.value = invScale;
+            if (u.weatherMap) u.weatherMap.value = weatherTex;
+            if (u.weatherAuxMap) u.weatherAuxMap.value = weatherAuxTex;
         }
     }
-    if (atmosphere) atmosphereUniforms.time.value += 0.002;
+
+    if (rainSystem) {
+        rainSystem.setWeatherFrame({ planetInvRot: weatherInvRot, planetInvScale: invScale });
+        rainSystem.setWeatherMap(getWeatherTexture());
+        rainSystem.setWindWorld(computeWindWorldFromAux(getWeatherAuxTexture(), invScale, weatherInvRot, weatherWindWorld));
+        rainSystem.update(delta);
+    }
+    
+    setPlanetWeatherTexture(getWeatherTexture());
+    setPlanetWeatherAuxTexture(getWeatherAuxTexture());
     
     renderer.render(scene, camera);
 }
@@ -1515,6 +1942,70 @@ function handleCloudUpdate() {
     updateRangeLabels();
     rebuildClouds(new THREE.Vector3().copy(dirLight.position).normalize());
 }
+function applyWaterCycleConfig() {
+    const minutesPerSec = clamp(parseFloat(weatherSpeedEl?.value) || 20, 0, 60);
+    const updateHz = clamp(parseFloat(weatherUpdateHzEl?.value) || 7, 1, 20);
+    const moistureLayers = clamp(parseFloat(weatherMoistureLayersEl?.value) || 2, 1, 4);
+    const evapStrength = clamp(parseFloat(weatherEvapEl?.value) || 1, 0, 3);
+    const precipStrength = clamp(parseFloat(weatherPrecipEl?.value) || 1, 0, 3);
+    const windStrength = clamp(parseFloat(weatherWindEl?.value) || 1, 0, 3);
+    const wetnessStrength = clamp(parseFloat(weatherWetnessEl?.value) || 0.75, 0, 2);
+    const oceanInertia = clamp(parseFloat(weatherOceanInertiaEl?.value) || 0.25, 0.05, 1);
+    const rainFxEnabled = (weatherRainFxToggleEl?.checked ?? true);
+    const rainFxStrength = clamp(parseFloat(weatherRainFxEl?.value) || 1, 0, 2);
+    const rainHaze = clamp(parseFloat(weatherRainHazeEl?.value) || 0.9, 0, 2);
+    const debugKey = (weatherDebugEl?.value || 'off').toLowerCase();
+    const debugMode = debugKey === 'cloud' ? 1
+        : debugKey === 'rain' ? 2
+        : debugKey === 'pressure' ? 3
+        : debugKey === 'soil' ? 4
+        : debugKey === 'temp' ? 5
+        : debugKey === 'snow' ? 6
+        : debugKey === 'wind' ? 7
+        : 0;
+
+    if (waterCycleSystem?.enabled && waterCycleSystem.ready) {
+        waterCycleSystem.setConfig({
+            timeScale: minutesPerSec * 60,
+            readbackIntervalS: 1 / updateHz,
+            moistureLayers,
+            evapStrength,
+            precipStrength,
+            windStrength,
+            oceanInertia
+        });
+    }
+    setPlanetWeatherStrength(wetnessStrength);
+    setPlanetWeatherDebugMode(debugMode);
+    atmosphereUniforms.rainHaze.value = rainHaze;
+
+    if (rainSystem) {
+        const showRain = (waterCycleToggleEl?.checked ?? false) && rainFxEnabled;
+        rainSystem.setEnabled(showRain);
+        rainSystem.setStrength(rainFxStrength);
+        rainSystem.setDensity(clamp(0.15 + rainFxStrength * 0.35, 0, 1));
+
+        if (lastPlanetSettings) {
+            const nearR = (lastPlanetSettings.radius ?? BASE_RADIUS_UNITS) + (lastPlanetSettings.heightScale ?? 0);
+            rainSystem.setPlanetNearRadius(nearR);
+        }
+
+        // Size rain relative to player scale so it looks sensible in Tiny mode.
+        const person = getPersonHeightUnits();
+        const sizeMul = 0.7 + rainFxStrength * 0.65;
+        rainSystem.setSizes({
+            dropLength: person * (6.0 * sizeMul),
+            dropWidth: person * (0.08 * sizeMul),
+            volumeRadius: person * (340.0 * sizeMul),
+            volumeHeight: person * (260.0 * sizeMul),
+            fallDistance: person * (420.0 * sizeMul)
+        });
+    }
+}
+function handleWaterCycleUpdate() {
+    updateRangeLabels();
+    applyWaterCycleConfig();
+}
 
 [atmosphereEl, atmosphereAlphaEl, atmosphereColorEl, atmosphereToggleEl].forEach((el) => {
     el.addEventListener(el.type === 'color' ? 'input' : 'change', handleAtmosphereUpdate);
@@ -1524,6 +2015,20 @@ function handleCloudUpdate() {
     el.addEventListener(el.type === 'color' ? 'input' : 'change', handleCloudUpdate);
     if (el.type === 'range') el.addEventListener('input', handleCloudUpdate);
 });
+[waterCycleToggleEl, waterCycleRunEl, weatherDebugEl, weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
+    if (!el) return;
+    el.addEventListener(el.type === 'checkbox' ? 'change' : (el.type === 'color' ? 'input' : 'change'), handleWaterCycleUpdate);
+    if (el.type === 'range') el.addEventListener('input', handleWaterCycleUpdate);
+});
+if (waterCycleStepBtn) {
+    waterCycleStepBtn.addEventListener('click', () => {
+        if (!(waterCycleToggleEl?.checked)) return;
+        if (!(waterCycleSystem?.enabled && waterCycleSystem.ready && waterCycleSystem.hasSurface)) return;
+        updateWeatherFrame();
+        // Advance by 10 simulated minutes and force a readback so visuals update immediately.
+        waterCycleSystem.update(0, weatherSunLocal, { dtSimOverride: 600, forceReadback: true });
+    });
+}
 
 addCloudLayerBtn.addEventListener('click', () => {
     const base = getBaseCloudSettings();
@@ -1541,6 +2046,34 @@ window.addEventListener('resize', onResize);
     el.addEventListener('input', updateRangeLabels);
 });
 if (invertLookEl) invertLookEl.addEventListener('change', updateRangeLabels);
+
+WaterCycleSystem.create({ gridWidth: 256, gridHeight: 128 }).then((sys) => {
+    waterCycleSystem = sys;
+    if (!waterCycleSystem.enabled) {
+        if (waterCycleToggleEl) {
+            waterCycleToggleEl.checked = false;
+            waterCycleToggleEl.disabled = true;
+        }
+        if (waterCycleRunEl) {
+            waterCycleRunEl.checked = false;
+            waterCycleRunEl.disabled = true;
+        }
+        if (waterCycleStepBtn) waterCycleStepBtn.disabled = true;
+        if (weatherDebugEl) weatherDebugEl.disabled = true;
+        [weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
+            if (el) el.disabled = true;
+        });
+    }
+    applyWaterCycleConfig();
+    if (pendingWaterCycleSurface && waterCycleSystem.enabled && waterCycleSystem.ready) {
+        waterCycleSystem.setPlanetSurface(pendingWaterCycleSurface);
+        pendingWaterCycleSurface = null;
+        setPlanetWeatherTexture(getWeatherTexture());
+        setPlanetWeatherAuxTexture(getWeatherAuxTexture());
+    }
+}).catch((err) => {
+    console.warn('[WaterCycleSystem] init failed', err);
+});
 
 applyPreset(presetEl.value);
 generateWorld(presetEl.value);

@@ -1,6 +1,33 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+const DEFAULT_WEATHER_TEX = (() => {
+    const data = new Uint8Array([0, 0, 128, 0]);
+    const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    return tex;
+})();
+
+const DEFAULT_WEATHER_AUX_TEX = (() => {
+    // temp, snow, windU, windV
+    const data = new Uint8Array([160, 0, 128, 128]);
+    const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    return tex;
+})();
+
 export class PlanetForge {
     constructor(size = 512) {
         this.size = size;
@@ -200,7 +227,7 @@ export class PlanetForge {
     // ==========================================================
     // STEP 3: OUTPUT TO THREE.JS
     // ==========================================================
-    createMesh(radius = 10, heightScale = 2, seaLevel = 0.5, subdivisions = 6, iceCap = 0.12) {
+    createMesh(radius = 10, heightScale = 2, seaLevel = 0.5, subdivisions = 6, iceCap = 0.12, weatherTexture = null, weatherAuxTexture = null) {
         this._sanitize();
         // Note: applyHydrology should be called before createMesh (e.g. in index.js) to avoid double-carving
         
@@ -285,7 +312,7 @@ export class PlanetForge {
             specular: new THREE.Color(0x666666),
             color: 0x888888,
             flatShading: false,
-            onBeforeCompile: (shader) => {
+            onBeforeCompile: function (shader) {
                 // Quick hack to colorize by height in the shader
                 shader.vertexShader = `
                     varying float vHeight;
@@ -311,15 +338,25 @@ export class PlanetForge {
                     varying float vWater;
                     varying float vSlope;
                     uniform float uIceCap;
+                    uniform sampler2D uWeatherMap;
+                    uniform sampler2D uWeatherAuxMap;
+                    uniform float uWeatherStrength;
+                    uniform float uWeatherDebug;
                     
-                    float hash(vec3 p) {
-                        p = fract(p * 0.3183099 + .1);
-                        p *= 17.0;
-                        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-                    }
-                    
-                    ${shader.fragmentShader}
-                `.replace(
+	                    float hash(vec3 p) {
+	                        p = fract(p * 0.3183099 + .1);
+	                        p *= 17.0;
+	                        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+	                    }
+
+	                    vec3 hsv2rgb(vec3 c) {
+	                        vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+	                        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+	                        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+	                    }
+	                    
+	                    ${shader.fragmentShader}
+	                `.replace(
                     '#include <color_fragment>',
                     `
                     // Recover normalized height value used for displacement
@@ -337,58 +374,116 @@ export class PlanetForge {
                     vec3 snow = vec3(1.0, 1.0, 1.0);
                     vec3 col;
                     float waterFactor = vWater;
-                    if(heightVal < sea) {
-                        float t = smoothstep(sea - 0.05, sea, heightVal);
-                        col = mix(deep, shallow, t);
-                        waterFactor = 1.0;
-                    } else if(heightVal < lowland) {
-                        float t = smoothstep(sea, lowland, heightVal);
-                        col = mix(shallow, grass, t);
-                    } else if(heightVal < midland) {
-                        float t = smoothstep(lowland, midland, heightVal);
-                        col = mix(grass, rock, t);
-                    } else if(heightVal < highland) {
-                        float t = smoothstep(midland, highland, heightVal);
-                        col = mix(rock, snow, t * 0.7);
-                    } else {
-                        col = snow;
-                    }
-                    
-                    // ROCKY AREAS: modulated by slope and noise
-                    float noise = hash(vDir * 80.0);
-                    // Steepness threshold (0 = flat, 1 = vertical)
-                    // We start mixing rock on slopes > ~10-15%
-                    float steepness = smoothstep(0.1, 0.35, vSlope + (noise * 0.1 - 0.05));
-                    
-                    if (heightVal >= sea) {
-                        col = mix(col, rock, steepness);
-                    }
-                    
-                    // Add roughness/noise to rock areas
-                    if (steepness > 0.1 || (heightVal >= midland && heightVal < highland)) {
-                        col *= (0.9 + 0.2 * noise);
-                    }
 
-                    float snowBlend = smoothstep(highland - 0.02, highland + 0.1, heightVal);
-                    float pole = smoothstep(1.0 - uIceCap, 1.0, abs(vDir.y));
-                    
-                    // Reduce snow on very steep cliffs (optional realism)
-                    float snowStick = 1.0 - smoothstep(0.4, 0.6, vSlope); 
-                    float snowAmt = max(snowBlend, pole * 0.8) * snowStick;
-                    
-                    col = mix(col, snow, snowAmt);
-                    
-                    if(waterFactor > 0.0) {
-                        float wf = clamp(waterFactor, 0.0, 1.0);
-                        vec3 wet = mix(shallow, deep, 0.6);
-                        col = mix(col, wet, wf);
+                    // Weather wetness (RGBA: cloud, rain, pressure, soil)
+                    vec3 d = normalize(vDir);
+                    float wu = atan(d.z, d.x) / (2.0 * 3.14159265) + 0.5;
+                    float wv = asin(clamp(d.y, -1.0, 1.0)) / 3.14159265 + 0.5;
+                    vec4 wData = texture2D(uWeatherMap, vec2(wu, wv));
+                    vec4 wAux = texture2D(uWeatherAuxMap, vec2(wu, wv));
+                    float rainNow = wData.g;
+                    float soilWet = wData.a;
+                    float wetness = clamp(max(rainNow, soilWet) * uWeatherStrength, 0.0, 1.0);
+
+	                    // Weather debug visualization:
+	                    // 0=off, 1=cloud, 2=rain, 3=pressure, 4=soil, 5=temp, 6=snow, 7=wind
+	                    if (uWeatherDebug > 0.5) {
+	                        if (uWeatherDebug < 1.5) {
+	                            float v = wData.r;
+	                            col = mix(vec3(0.02, 0.08, 0.02), vec3(0.65, 1.0, 0.65), v);
+	                        } else if (uWeatherDebug < 2.5) {
+	                            float v = wData.g;
+	                            col = mix(vec3(0.02, 0.05, 0.10), vec3(0.20, 0.55, 1.0), v);
+	                        } else if (uWeatherDebug < 3.5) {
+	                            float p = (wData.b - 0.5) * 2.0;
+	                            col = (p >= 0.0)
+	                                ? mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 0.15, 0.15), clamp(p, 0.0, 1.0))
+	                                : mix(vec3(0.0, 0.0, 0.0), vec3(0.15, 0.55, 1.0), clamp(-p, 0.0, 1.0));
+	                        } else if (uWeatherDebug < 4.5) {
+	                            float v = wData.a;
+	                            col = mix(vec3(0.03, 0.03, 0.03), vec3(0.10, 1.0, 0.20), v);
+	                        } else if (uWeatherDebug < 5.5) {
+	                            float t = wAux.r;
+	                            col = mix(vec3(0.08, 0.12, 0.35), vec3(1.0, 0.35, 0.15), t);
+	                        } else if (uWeatherDebug < 6.5) {
+	                            float s = wAux.g;
+	                            col = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 1.0, 1.0), s);
+	                        } else {
+	                            vec2 wv2 = (wAux.ba - 0.5) * 2.0;
+	                            float sp = clamp(length(wv2), 0.0, 1.0);
+	                            float ang = atan(wv2.y, wv2.x);
+	                            float hue = ang / (2.0 * 3.14159265) + 0.5;
+	                            vec3 windCol = hsv2rgb(vec3(hue, 0.85, pow(sp, 0.65)));
+	                            col = mix(vec3(0.02, 0.02, 0.02), windCol, smoothstep(0.05, 0.15, sp));
+	                        }
+	                    } else {
+                        if(heightVal < sea) {
+                            float t = smoothstep(sea - 0.05, sea, heightVal);
+                            col = mix(deep, shallow, t);
+                            waterFactor = 1.0;
+                        } else if(heightVal < lowland) {
+                            float t = smoothstep(sea, lowland, heightVal);
+                            col = mix(shallow, grass, t);
+                        } else if(heightVal < midland) {
+                            float t = smoothstep(lowland, midland, heightVal);
+                            col = mix(grass, rock, t);
+                        } else if(heightVal < highland) {
+                            float t = smoothstep(midland, highland, heightVal);
+                            col = mix(rock, snow, t * 0.7);
+                        } else {
+                            col = snow;
+                        }
+                        
+                        // ROCKY AREAS: modulated by slope and noise
+                        float noise = hash(vDir * 80.0);
+                        // Steepness threshold (0 = flat, 1 = vertical)
+                        // We start mixing rock on slopes > ~10-15%
+                        float steepness = smoothstep(0.1, 0.35, vSlope + (noise * 0.1 - 0.05));
+                        
+                        if (heightVal >= sea) {
+                            col = mix(col, rock, steepness);
+                        }
+                        
+                        // Add roughness/noise to rock areas
+                        if (steepness > 0.1 || (heightVal >= midland && heightVal < highland)) {
+                            col *= (0.9 + 0.2 * noise);
+                        }
+
+                        float snowBlend = smoothstep(highland - 0.02, highland + 0.1, heightVal);
+	                        float pole = smoothstep(1.0 - uIceCap, 1.0, abs(vDir.y));
+	                        
+	                        // Reduce snow on very steep cliffs (optional realism)
+	                        float snowStick = 1.0 - smoothstep(0.4, 0.6, vSlope); 
+	                        float dynSnow = wAux.g;
+	                        float snowAmt = max(max(snowBlend, pole * 0.8), dynSnow) * snowStick;
+	                        
+	                        col = mix(col, snow, snowAmt);
+
+                        // Wet land darkening (avoid snow/ice).
+                        if (heightVal >= sea) {
+                            float landWet = wetness * (1.0 - snowAmt);
+                            vec3 damp = col * vec3(0.70, 0.82, 0.74);
+                            col = mix(col, damp, landWet);
+                        }
+                        
+                        if(waterFactor > 0.0) {
+                            float wf = clamp(waterFactor, 0.0, 1.0);
+                            vec3 wet = mix(shallow, deep, 0.6);
+                            col = mix(col, wet, wf);
+                        }
                     }
                     diffuseColor = vec4(col, 1.0);
                     `
                 );
                 shader.uniforms.uIceCap = { value: iceCap };
+                shader.uniforms.uWeatherMap = { value: this.userData.weather?.texture ?? DEFAULT_WEATHER_TEX };
+                shader.uniforms.uWeatherAuxMap = { value: this.userData.weather?.auxTexture ?? DEFAULT_WEATHER_AUX_TEX };
+                shader.uniforms.uWeatherStrength = { value: this.userData.weather?.strength ?? 0.75 };
+                shader.uniforms.uWeatherDebug = { value: this.userData.weather?.debug ?? 0.0 };
+                this.userData.shader = shader;
             }
         });
+        material.userData.weather = { texture: weatherTexture ?? DEFAULT_WEATHER_TEX, auxTexture: weatherAuxTexture ?? DEFAULT_WEATHER_AUX_TEX, strength: 0.75, debug: 0.0 };
 
         return new THREE.Mesh(geometry, material);
     }
