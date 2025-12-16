@@ -70,6 +70,9 @@ const weatherSimModeEl = document.getElementById('weatherSimMode');
 const weatherVolumeResEl = document.getElementById('weatherVolumeRes');
 const weatherVolumeResValueEl = document.getElementById('weatherVolumeResValue');
 const weatherDebugEl = document.getElementById('weatherDebug');
+const volumeSliceEl = document.getElementById('volumeSlice');
+const volumeSliceValueEl = document.getElementById('volumeSliceValue');
+let volumeDebugSprite = null;
 const weatherSpeedEl = document.getElementById('weatherSpeed');
 const weatherSpeedValueEl = document.getElementById('weatherSpeedValue');
 const weatherUpdateHzEl = document.getElementById('weatherUpdateHz');
@@ -139,6 +142,121 @@ const DEFAULT_WEATHER_AUX_TEX = (() => {
     tex.colorSpace = THREE.NoColorSpace;
     return tex;
 })();
+
+function ensureVolumeDebugSprite() {
+    if (volumeDebugSprite) return volumeDebugSprite;
+    const material = new THREE.SpriteMaterial({
+        map: DEFAULT_WEATHER_TEX,
+        transparent: true,
+        opacity: 1.0,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 999;
+    sprite.scale.set(5, 5, 1); // in camera space units
+    // Move to top-right but keep fully visible.
+    sprite.position.set(7.2, 7.5, -12);
+    camera.add(sprite);
+    volumeDebugSprite = sprite;
+    return sprite;
+}
+
+function setVolumeDebugEnabled(enabled) {
+    volumeDebugEnabled = enabled;
+    if (!enabled && volumeDebugSprite) {
+        volumeDebugSprite.visible = false;
+    }
+    if (enabled) {
+        ensureVolumeDebugSprite();
+        volumeDebugSprite.visible = true;
+    }
+}
+
+function setVolumeSliceVisibility(show) {
+    const field = document.getElementById('volumeSliceField');
+    if (field) field.style.display = show ? 'block' : 'none';
+}
+
+function setVolumeSliceFromUI(val) {
+    if (!volumeSliceEl) return;
+    const max = Math.max(0, Number(volumeSliceEl.max) || 0);
+    const v = Math.min(Math.max(Math.floor(val), 0), max);
+    volumeDebugSlice = v;
+    if (volumeSliceEl.value !== String(v)) volumeSliceEl.value = v;
+    if (volumeSliceValueEl) volumeSliceValueEl.textContent = v;
+    updateVolumeDebugSprite();
+}
+
+function syncVolumeSliceRange() {
+    if (!volumeSliceEl) return;
+    const meta = getWeatherVolumeMeta();
+    const n = meta?.n ?? 0;
+    const max = Math.max(0, n - 1);
+    volumeSliceEl.max = String(max);
+    if (volumeDebugSlice > max) {
+        volumeDebugSlice = max;
+        if (volumeSliceValueEl) volumeSliceValueEl.textContent = max;
+    }
+}
+
+function getVolumeDebugTexture() {
+    const atlas = getWeatherVolumeTexture();
+    const meta = getWeatherVolumeMeta();
+    if (!atlas || !meta) return null;
+    const N = meta.n || 0;
+    if (!volumeSliceTexture || volumeSliceTexture.image.width !== N || volumeSliceTexture.image.height !== N) {
+        const data = new Uint8Array(Math.max(1, N * N * 4));
+        volumeSliceTexture = new THREE.DataTexture(data, Math.max(1, N), Math.max(1, N), THREE.RGBAFormat, THREE.UnsignedByteType);
+        volumeSliceTexture.needsUpdate = true;
+        volumeSliceTexture.wrapS = THREE.ClampToEdgeWrapping;
+        volumeSliceTexture.wrapT = THREE.ClampToEdgeWrapping;
+        volumeSliceTexture.minFilter = THREE.NearestFilter;
+        volumeSliceTexture.magFilter = THREE.NearestFilter;
+        volumeSliceTexture.generateMipmaps = false;
+        volumeSliceTexture.colorSpace = THREE.NoColorSpace;
+    }
+    const slice = Math.min(Math.max(volumeDebugSlice | 0, 0), Math.max(0, N - 1));
+    const tilesX = meta.tilesX || 1;
+    const tileX = slice % tilesX;
+    const tileY = Math.floor(slice / tilesX);
+    const atlasData = atlas.image?.data;
+    if (!(atlasData && atlasData.length >= meta.atlasW * meta.atlasH * 4)) return atlas;
+    const out = volumeSliceTexture.image.data;
+    for (let y = 0; y < N; y++) {
+        const srcRow = ((tileY * N + y) * meta.atlasW + tileX * N) * 4;
+        const dstRow = y * N * 4;
+        // Visualize cloud (R) as grayscale, rain (G) as blue tint to spot precip.
+        for (let x = 0; x < N; x++) {
+            const si = srcRow + x * 4;
+            const di = dstRow + x * 4;
+            const cloud = atlasData[si] ?? 0;
+            const rain = atlasData[si + 1] ?? 0;
+            const p = atlasData[si + 2] ?? 128;
+            const rh = atlasData[si + 3] ?? 0;
+            const c = Math.min(255, cloud * 2); // boost contrast
+            out[di + 0] = c;
+            out[di + 1] = Math.min(255, rain + c * 0.3);
+            out[di + 2] = Math.min(255, p);
+            out[di + 3] = Math.max(160, rh); // keep visible
+        }
+    }
+    volumeSliceTexture.needsUpdate = true;
+    return volumeSliceTexture;
+}
+
+function updateVolumeDebugSprite() {
+    if (!volumeDebugEnabled || !volumeDebugSprite) return;
+    const tex = getVolumeDebugTexture();
+    if (!tex) {
+        volumeDebugSprite.visible = false;
+        return;
+    }
+    volumeDebugSprite.visible = true;
+    volumeDebugSprite.material.map = tex;
+    volumeDebugSprite.material.needsUpdate = true;
+}
 
 const isMobileDevice = () => window.matchMedia('(max-width: 768px)').matches || /Mobi|Android|iP(ad|hone|od)|IEMobile|BlackBerry|Kindle|Silk|Opera Mini/i.test(navigator.userAgent || '');
 
@@ -223,6 +341,9 @@ const weatherTmpVecB = new THREE.Vector3();
 const weatherTmpVecC = new THREE.Vector3();
 const weatherTmpVecD = new THREE.Vector3();
 const weatherWindWorld = new THREE.Vector3();
+let volumeDebugEnabled = false;
+let volumeDebugSlice = 0;
+let volumeSliceTexture = null;
 
 const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
 
@@ -447,7 +568,7 @@ const waterUniforms = {
     time: { value: 0 },
     deepColor: { value: new THREE.Color(0x08203f) },
     shallowColor: { value: new THREE.Color(0x154f8a) },
-    opacity: { value: 0.65 },
+    opacity: { value: 0.95 },
     fresnelPower: { value: 3.4 },
     iceCap: { value: 0.0 },
     iceColor: { value: new THREE.Color(0xd9f1ff) }
@@ -1539,9 +1660,11 @@ function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planet
     const surfaceRadius = planetRadius + ((seaLevel - 0.5) * heightScale) + 0.05;
     const metersPerUnit = ((volumeMeta?.planetRadiusM ?? DEFAULT_RADIUS_M) / BASE_RADIUS_UNITS);
     const atmoUnits = ((volumeMeta?.atmoThicknessM ?? 20_000) / Math.max(metersPerUnit, 1e-6));
-    const baseRadius = Math.max(0.1, radius + settings.height);
+    // Tie the inner cloud shell to the actual surface so clouds can extend to ground/sea.
+    const baseRadius = surfaceRadius;
     const halfThickness = Math.max(0.25, atmoUnits * 0.5);
-    const innerRadius = Math.max(surfaceRadius, baseRadius - halfThickness);
+    // Let clouds hug the surface/ocean: bring inner shell slightly below surfaceRadius.
+    const innerRadius = Math.max(0.1, baseRadius - 0.05);
     const outerRadius = innerRadius + (2.0 * halfThickness);
 
     const uniforms = {
@@ -1645,19 +1768,41 @@ function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planet
                 return sum;
             }
 
-            vec4 sampleVolumeNearest(vec3 posLocal) {
+            vec2 sampleVolumeAtlas(vec3 idx) {
+                float tx = mod(idx.z, tilesX);
+                float ty = floor(idx.z / tilesX);
+                float ax = (tx * volumeN + idx.x + 0.5) / atlasW;
+                float ay = (ty * volumeN + idx.y + 0.5) / atlasH;
+                return texture2D(volumeAtlas, vec2(ax, ay)).rg; // cloud, rain
+            }
+
+            vec4 sampleVolumeTrilinear(vec3 posLocal) {
                 // posLocal is in planet-local *unscaled* render units.
                 vec3 posM = posLocal * metersPerUnit;
                 vec3 uvw = clamp(posM / max(volumeExtentM, 1e-3) * 0.5 + vec3(0.5), 0.0, 0.999999);
-                vec3 ijk = floor(uvw * volumeN);
-                float ix = clamp(ijk.x, 0.0, volumeN - 1.0);
-                float iy = clamp(ijk.y, 0.0, volumeN - 1.0);
-                float iz = clamp(ijk.z, 0.0, volumeN - 1.0);
-                float tx = mod(iz, tilesX);
-                float ty = floor(iz / tilesX);
-                float ax = (tx * volumeN + ix + 0.5) / atlasW;
-                float ay = (ty * volumeN + iy + 0.5) / atlasH;
-                return texture2D(volumeAtlas, vec2(ax, ay));
+                vec3 posGrid = uvw * (volumeN - 1.0);
+                vec3 i0 = floor(posGrid);
+                vec3 f = clamp(posGrid - i0, 0.0, 1.0);
+                vec3 i1 = min(i0 + 1.0, vec3(volumeN - 1.0));
+                vec2 c000 = sampleVolumeAtlas(i0);
+                vec2 c100 = sampleVolumeAtlas(vec3(i1.x, i0.y, i0.z));
+                vec2 c010 = sampleVolumeAtlas(vec3(i0.x, i1.y, i0.z));
+                vec2 c110 = sampleVolumeAtlas(vec3(i1.x, i1.y, i0.z));
+                vec2 c001 = sampleVolumeAtlas(vec3(i0.x, i0.y, i1.z));
+                vec2 c101 = sampleVolumeAtlas(vec3(i1.x, i0.y, i1.z));
+                vec2 c011 = sampleVolumeAtlas(vec3(i0.x, i1.y, i1.z));
+                vec2 c111 = sampleVolumeAtlas(i1);
+
+                float wx = f.x, wy = f.y, wz = f.z;
+                vec2 cx0 = mix(c000, c100, wx);
+                vec2 cx1 = mix(c010, c110, wx);
+                vec2 cx2 = mix(c001, c101, wx);
+                vec2 cx3 = mix(c011, c111, wx);
+                vec2 cy0 = mix(cx0, cx1, wy);
+                vec2 cy1 = mix(cx2, cx3, wy);
+                vec2 c = mix(cy0, cy1, wz);
+
+                return vec4(c, 0.0, 0.0);
             }
 
             float densityAt(vec3 pos, out float rainOut) {
@@ -1666,7 +1811,7 @@ function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planet
                 float h = (r - innerRadius) / max(outerRadius - innerRadius, 1e-3);
                 float profile = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.55, 1.0, h));
 
-                vec4 v = sampleVolumeNearest(pos);
+                vec4 v = sampleVolumeTrilinear(pos);
                 float cloud = v.r;
                 float rain = v.g;
                 rainOut = rain;
@@ -2081,6 +2226,7 @@ function animate() {
             if (u.metersPerUnit) u.metersPerUnit.value = (meta.planetRadiusM ?? DEFAULT_RADIUS_M) / BASE_RADIUS_UNITS;
         }
     }
+    updateVolumeDebugSprite();
 
     if (rainSystem) {
         rainSystem.setWeatherFrame({ planetInvRot: weatherInvRot, planetInvScale: invScale });
@@ -2420,6 +2566,7 @@ function applyWaterCycleConfig() {
         : debugKey === 'snow' ? 6
         : debugKey === 'wind' ? 7
         : 0;
+    const debugVolume = debugKey === 'volume';
 
     if (waterCycleSystem?.enabled && waterCycleSystem.ready) {
         const cfg = {
@@ -2435,7 +2582,11 @@ function applyWaterCycleConfig() {
     }
     setPlanetWeatherStrength(wetnessStrength);
     setPlanetWeatherDebugMode(debugMode);
+    setVolumeDebugEnabled(debugVolume);
+    setVolumeSliceVisibility(debugVolume);
     atmosphereUniforms.rainHaze.value = rainHaze;
+    syncVolumeSliceRange();
+    syncVolumeSliceRange();
 
     if (rainSystem) {
         const showRain = (waterCycleToggleEl?.checked ?? false) && rainFxEnabled;
@@ -2463,6 +2614,7 @@ function applyWaterCycleConfig() {
 function handleWaterCycleUpdate() {
     updateRangeLabels();
     void selectWaterCycleSystemIfNeeded();
+    syncVolumeSliceRange();
     applyWaterCycleConfig();
     rebuildWaterCycleClouds(new THREE.Vector3().copy(dirLight.position).normalize());
 }
@@ -2480,6 +2632,11 @@ function handleWaterCycleUpdate() {
     el.addEventListener(el.type === 'checkbox' ? 'change' : (el.type === 'color' ? 'input' : 'change'), handleWaterCycleUpdate);
     if (el.type === 'range') el.addEventListener('input', handleWaterCycleUpdate);
 });
+if (volumeSliceEl) {
+    volumeSliceEl.addEventListener('input', (e) => setVolumeSliceFromUI(Number(e.target.value)));
+    volumeSliceEl.addEventListener('change', (e) => setVolumeSliceFromUI(Number(e.target.value)));
+    if (volumeSliceValueEl) volumeSliceValueEl.textContent = volumeSliceEl.value;
+}
 if (waterCycleStepBtn) {
     waterCycleStepBtn.addEventListener('click', () => {
         if (!(waterCycleToggleEl?.checked)) return;

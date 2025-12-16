@@ -18,6 +18,10 @@
       --text: #e5e7eb;
       --muted: #94a3b8;
     }
+    #hud select option {
+      background: #0a0c12;
+      color: var(--text);
+    }
     * { box-sizing: border-box; }
     html, body {
       touch-action: none;
@@ -576,8 +580,8 @@
         <div class="field">
           <label for="weatherVolumeRes">Volume resolution (N)</label>
           <div class="range-row">
-            <input id="weatherVolumeRes" type="range" min="32" max="128" step="16" value="64">
-            <span class="value" id="weatherVolumeResValue">64</span>
+            <input id="weatherVolumeRes" type="range" min="32" max="128" step="16" value="32">
+            <span class="value" id="weatherVolumeResValue">32</span>
           </div>
         </div>
         <div class="field">
@@ -591,7 +595,15 @@
             <option value="temp">Temperature</option>
             <option value="snow">Snowpack</option>
             <option value="wind">Wind</option>
+            <option value="volume">Volume atlas (3D)</option>
           </select>
+        </div>
+        <div class="field" id="volumeSliceField" style="display:none;">
+          <label for="volumeSlice">Volume slice (debug)</label>
+          <div class="range-row">
+            <input id="volumeSlice" type="range" min="0" max="63" step="1" value="0">
+            <span class="value" id="volumeSliceValue">0</span>
+          </div>
         </div>
         <div class="field">
           <label for="weatherSpeed">Weather speed (minutes/sec)</label>

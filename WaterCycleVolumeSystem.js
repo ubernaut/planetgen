@@ -99,6 +99,7 @@ export class WaterCycleVolumeSystem {
 
         this.planetRadiusM = 500_000;
         this.atmoThicknessM = 20_000;
+        this.mountainHeightM = 8000;
 
         this.volumeTextureData = new Uint8Array(this.atlasPixelCount * 4);
         this.volumeAtlasTexture = makeDataTexture(this.volumeTextureData, this.atlasW, this.atlasH, {
@@ -158,7 +159,7 @@ export class WaterCycleVolumeSystem {
             tilesY: this.tilesY,
             atlasW: this.atlasW,
             atlasH: this.atlasH,
-            extentM: this.planetRadiusM + this.atmoThicknessM,
+            extentM: this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM,
             planetRadiusM: this.planetRadiusM,
             atmoThicknessM: this.atmoThicknessM
         };
@@ -342,12 +343,23 @@ export class WaterCycleVolumeSystem {
         const floatsPerVoxel = 8;
         const buf = new Float32Array(voxelCount * floatsPerVoxel);
 
-        const extentM = this.planetRadiusM + this.atmoThicknessM;
+        const seaOffsetM = (this.seaLevel - 0.5) * this.mountainHeightM;
+        const baseSeaR = this.planetRadiusM + seaOffsetM;
+        const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
         const voxelSizeM = (2 * extentM) / Math.max(N, 1);
         const halfVoxelM = voxelSizeM * 0.5;
         const baseTemp = 288;
         const lapse = 0.0065;
         const scaleH = 8000;
+
+        const satMixingRatio = (T) => {
+            const Tc = T - 273.15;
+            const es_hPa = 6.112 * Math.exp((17.67 * Tc) / (Tc + 243.5));
+            const e = es_hPa * 100.0;
+            const p = 101325.0;
+            const eps = 0.622;
+            return (eps * e) / Math.max(p - e, 1.0);
+        };
 
         let i = 0;
         for (let z = 0; z < N; z++) {
@@ -360,7 +372,7 @@ export class WaterCycleVolumeSystem {
                     const fx = ((x + 0.5) / N) * 2 - 1;
                     const px = fx * extentM;
                     const r = Math.hypot(px, py, pz);
-                    const altCenter = r - this.planetRadiusM;
+                    const altCenter = r - baseSeaR;
                     let T = 0;
                     let qv = 0;
                     if (r > 1e-3) {
@@ -376,7 +388,14 @@ export class WaterCycleVolumeSystem {
                             const latFactor = Math.abs(dirY);
                             const Teq = baseTemp - 55 * latFactor - lapse * altEff;
                             T = Teq;
-                            qv = 0.010 * Math.exp(-altEff / scaleH);
+                            // Start humid near the surface so clouds can form quickly.
+                            const qs = satMixingRatio(T);
+                            const rh = altEff < 2000 ? 0.85 : 0.55;
+                            qv = qs * rh * Math.exp(-altEff / (scaleH * 1.25));
+                            if (altEff < 2000) {
+                                // Seed a small amount of cloud water near the surface so visuals appear quickly.
+                                buf[i + 2] = qs * 0.02;
+                            }
                         }
                     }
                     buf[i + 0] = T;
@@ -415,37 +434,58 @@ export class WaterCycleVolumeSystem {
 
         const dtReal = Math.min(Math.max(deltaSeconds ?? 0, 0), 0.25);
         const dtSimRaw = Number.isFinite(opts.dtSimOverride) ? opts.dtSimOverride : (dtReal * this.timeScale);
-        const dtSim = Math.min(Math.max(dtSimRaw, 0), 900);
-        if (dtSim <= 0) return;
+        let remainingSim = Math.max(dtSimRaw, 0);
+        if (remainingSim <= 0) return;
 
-        this.simTimeS += dtSim;
+        // Stability: keep steps small enough that advection doesn't "teleport" across many voxels.
+        // Large dt makes the semi‑Lagrangian nearest sampling jump into empty (out-of-shell) voxels,
+        // which looks like the weather "disappearing" instantly.
+        const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
+        const voxelSizeM = (2 * extentM) / Math.max(this.volumeN, 1);
+        const maxWindMS = Math.max(5, 60 * this.windStrength);
+        const cflDt = 0.5 * voxelSizeM / maxWindMS; // seconds
+        const maxStepSim = 60; // hard cap (sim seconds) per dispatch step
+        const stepCap = Math.max(2, Math.min(maxStepSim, cflDt));
+        const maxSubsteps = 24;
+
         this.readbackTimerS += dtReal;
-
-        this._writeUniforms(dtSim, this.simTimeS, sunDirLocal);
-
         const device = this.device;
         const encoder = device.createCommandEncoder();
-        {
-            const pass = encoder.beginComputePass();
-            pass.setPipeline(this.pipelineSim);
-            pass.setBindGroup(0, this.bindGroupsSim[this.ping]);
-            const wg = 4;
-            pass.dispatchWorkgroups(
-                Math.ceil(this.volumeN / wg),
-                Math.ceil(this.volumeN / wg),
-                Math.ceil(this.volumeN / wg)
-            );
-            pass.end();
-        }
-        {
-            const pass = encoder.beginComputePass();
-            pass.setPipeline(this.pipelineCollapse);
-            pass.setBindGroup(0, this.bindGroupsCollapse[this.ping]);
-            pass.dispatchWorkgroups(
-                Math.ceil(this.weatherW / 8),
-                Math.ceil(this.weatherH / 8)
-            );
-            pass.end();
+
+        let substeps = 0;
+        while (remainingSim > 0.0 && substeps < maxSubsteps) {
+            const dtSim = Math.min(remainingSim, stepCap);
+            if (dtSim <= 0) break;
+            remainingSim -= dtSim;
+            this.simTimeS += dtSim;
+
+            this._writeUniforms(dtSim, this.simTimeS, sunDirLocal);
+
+            {
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(this.pipelineSim);
+                pass.setBindGroup(0, this.bindGroupsSim[this.ping]);
+                const wg = 4;
+                pass.dispatchWorkgroups(
+                    Math.ceil(this.volumeN / wg),
+                    Math.ceil(this.volumeN / wg),
+                    Math.ceil(this.volumeN / wg)
+                );
+                pass.end();
+            }
+            {
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(this.pipelineCollapse);
+                pass.setBindGroup(0, this.bindGroupsCollapse[this.ping]);
+                pass.dispatchWorkgroups(
+                    Math.ceil(this.weatherW / 8),
+                    Math.ceil(this.weatherH / 8)
+                );
+                pass.end();
+            }
+
+            this.ping = 1 - this.ping;
+            substeps++;
         }
 
         let pendingReadbackIndex = null;
@@ -470,8 +510,6 @@ export class WaterCycleVolumeSystem {
         if (pendingReadbackIndex !== null) {
             this._scheduleReadback(pendingReadbackIndex);
         }
-
-        this.ping = 1 - this.ping;
     }
 
     _scheduleReadback(rbIndex) {
@@ -502,7 +540,7 @@ export class WaterCycleVolumeSystem {
     _writeUniforms(dtSim, timeSim, sunDirLocal) {
         const u = this.uniformData;
 
-        const extentM = this.planetRadiusM + this.atmoThicknessM;
+        const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
         const invVoxel = this.volumeN / Math.max(2 * extentM, 1e-6);
 
         // [0]: N, N, N, dt
@@ -532,14 +570,16 @@ export class WaterCycleVolumeSystem {
         // [4]: solarHeatingK, tempRelax, evapOcean, evapLand
         u[16] = 18;
         u[17] = 1 / 21600;
-        u[18] = 3e-5 * this.evapStrength;
-        u[19] = 1.2e-5 * this.evapStrength;
+        // Stronger evaporation so the system rapidly humidifies.
+        u[18] = 1.8e-4 * this.evapStrength;
+        u[19] = 6e-5 * this.evapStrength;
 
         // [5]: condenseRate, precipRate, rainDecay, cloudEvap
-        u[20] = 1 / 1800;
-        u[21] = (1 / 1200) * this.precipStrength;
-        u[22] = 1 / 1800;
-        u[23] = 1 / 3600;
+        // Easier cloud formation and very slow rain-out to keep clouds visible.
+        u[20] = 1 / 800;
+        u[21] = (1 / 36000) * this.precipStrength;
+        u[22] = 1 / 43200;
+        u[23] = 1 / 43200;
 
         // [6]: windRelax, windDrag, coriolisMin, maxWind
         u[24] = (1 / 7200) * this.windStrength;
@@ -551,7 +591,8 @@ export class WaterCycleVolumeSystem {
         u[28] = 120;
         u[29] = 45000;
         u[30] = 1 / 7200;
-        u[31] = 18.0;
+        // Reduce fall speed so precipitation doesn't clear the column too quickly.
+        u[31] = 2.0;
 
         // [8]: surfaceW, surfaceH, weatherW, weatherH
         u[32] = this.surfaceW;
@@ -573,8 +614,9 @@ export class WaterCycleVolumeSystem {
 
         // [11]: reserved
         // Mountain height scale (meters) used to convert surface elev01 -> meters for terrain-aware boundaries.
-        u[44] = 8000;
-        u[45] = 0;
+        u[44] = this.mountainHeightM;
+        // Sea level offset in meters so oceans start at sea surface, not planet base radius.
+        u[45] = (this.seaLevel - 0.5) * this.mountainHeightM;
         u[46] = 0;
         u[47] = 0;
 
@@ -602,6 +644,7 @@ fn timeS() -> f32 { return params[1].x; }
 fn extentM() -> f32 { return params[1].y; }
 fn invVoxelSize() -> f32 { return params[1].z; }
 fn planetRadiusM() -> f32 { return params[1].w; }
+fn seaOffsetM() -> f32 { return params[11].y; }
 
 fn atmoThicknessM() -> f32 { return params[2].x; }
 fn baseTempK() -> f32 { return params[2].y; }
@@ -683,7 +726,8 @@ fn surfaceIndexFromDir(dir: vec3<f32>) -> u32 {
 fn groundAltFromSurface(s: vec4<f32>) -> f32 {
   let ocean = clamp(s.x, 0.0, 1.0);
   let elev01 = clamp(s.y, 0.0, 1.0);
-  return (1.0 - ocean) * elev01 * mountainHeightM();
+  // Oceans sit at sea level offset; land uses elevation meters.
+  return mix(seaOffsetM(), elev01 * mountainHeightM(), 1.0 - ocean);
 }
 
 fn satVaporPressurePa(T: f32) -> f32 {
@@ -772,11 +816,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Radiative equilibrium temperature proxy.
   let insolation = max(dot(dir, normalize(sunDir())), 0.0);
+  // Keep a floor so the sun-facing half still evaporates when the sun is low.
+  let insFloor = max(insolation, 0.2);
   let latFactor = abs(dir.y);
   let snowCover = snow * (1.0 - ocean);
   let albedoBase = mix(0.22, 0.06, ocean);
   let albedo = mix(albedoBase, 0.75, snowCover);
-  let Teq = baseTempK() - 55.0 * latFactor + solarHeatingK() * insolation * (1.0 - albedo) - (lapseRate() * altEff);
+  let Teq = baseTempK() - 55.0 * latFactor + solarHeatingK() * insFloor * (1.0 - albedo) - (lapseRate() * altEff);
   let relaxRate = tempRelax() * mix(1.0, oceanInertia(), ocean);
   T = mix(T, Teq, clamp(dt() * relaxRate, 0.0, 1.0));
 
@@ -836,8 +882,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let qs = satMixingRatio(T);
   let deficit = max(0.0, qs - qv);
   let nearSurface = select(0.0, 1.0, altEff < 2000.0);
-  qv += nearSurface * ocean * evapOcean() * insolation * deficit * dt();
-  qv += nearSurface * (1.0 - ocean) * evapLand() * insolation * soil * (1.0 - 0.85 * snowCover) * dt();
+  qv += nearSurface * ocean * evapOcean() * insFloor * deficit * dt();
+  qv += nearSurface * (1.0 - ocean) * evapLand() * insFloor * soil * (1.0 - 0.85 * snowCover) * dt();
+  // Keep a minimum humidity reservoir near the surface so it can't dry out completely.
+  let qMin = qs * 0.2;
+  qv = max(qv, nearSurface * qMin + (1.0 - nearSurface) * qv);
+  // Seed a tiny cloud amount near the surface to kickstart visuals/stability.
+  let seedQc = nearSurface * insFloor * (0.0005 + 0.00055 * ocean);
+  let take = min(seedQc, qv * 0.6);
+  qv -= take;
+  qc += take;
 
   // Condensation / evaporation of cloud water.
   let latentK = 2000.0;
@@ -854,7 +908,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   // Precipitation generation.
-  let qcThresh = 0.001;
+  // Threshold tuned so small clouds survive; autoconversion is slow.
+  let qcThresh = 0.0015;
   let pr = max(0.0, qc - qcThresh) * clamp(dt() * precipRate(), 0.0, 1.0);
   qc -= pr;
   qr += pr;
@@ -905,7 +960,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   stateDst[i] = Voxel(vec4<f32>(T, qv, qc, qr), vec4<f32>(p, vel));
 
   // Pack volume atlas (cloud, rain, pressure, RH).
-  let cloud01 = clamp(qc * 600.0, 0.0, 1.0);
+  // Boost visual contrast so low but non‑zero cloud water shows up.
+  let cloud01 = clamp(qc * 8000.0, 0.0, 1.0);
   let rain01 = clamp(qr * 800.0, 0.0, 1.0);
   let p01 = clamp(0.5 + p * (1.0 / 6000.0), 0.0, 1.0);
   let rh01 = clamp(select(0.0, qv / max(qs, 1e-6), qs > 0.0), 0.0, 1.0);
@@ -953,6 +1009,8 @@ fn weatherH() -> u32 { return u32(params[8].w + 0.5); }
 
 fn weatherOffset() -> u32 { return u32(params[10].x + 0.5); }
 fn auxOffset() -> u32 { return u32(params[10].y + 0.5); }
+fn mountainHeightM() -> f32 { return max(params[11].x, 0.0); }
+fn seaOffsetM() -> f32 { return params[11].y; }
 
 fn idx3(x: u32, y: u32, z: u32) -> u32 {
   let n = N();
@@ -984,6 +1042,12 @@ fn surfaceIndexFromDir(dir: vec3<f32>) -> u32 {
   let x = u32(uu * f32(surfaceW()));
   let y = u32(vv * f32(surfaceH()));
   return y * surfaceW() + x;
+}
+
+fn groundAltFromSurface(s: vec4<f32>) -> f32 {
+  let ocean = clamp(s.x, 0.0, 1.0);
+  let elev01 = clamp(s.y, 0.0, 1.0);
+  return (1.0 - ocean) * elev01 * mountainHeightM();
 }
 
 fn packRGBA8(r: f32, g: f32, b: f32, a: f32) -> u32 {
@@ -1022,6 +1086,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let surfIdx = surfaceIndexFromDir(dir);
   let surf = surface[surfIdx];
   let ocean = clamp(surf.x, 0.0, 1.0);
+  var groundR = planetRadiusM() + groundAltFromSurface(surf);
+  // Ensure ocean columns start at sea surface, not base planet radius.
+  groundR = max(groundR, planetRadiusM() + seaOffsetM());
 
   let ss0 = surfaceStateSrc[i2];
   var soil = clamp(ss0.x, 0.0, 1.0);
@@ -1035,10 +1102,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var Tsurf = 280.0;
   var velSample = vec3<f32>(0.0);
 
-  let steps: u32 = 18u;
+  // Sample more layers so thin clouds are captured in the 2D maps.
+  let steps: u32 = 32u;
   for (var k: u32 = 0u; k < steps; k = k + 1u) {
     let t = (f32(k) + 0.5) / f32(steps);
-    let r = planetRadiusM() + t * atmoThicknessM();
+    let r = groundR + t * atmoThicknessM();
     let pos = dir * r;
     let s = sampleNearest(pos);
     maxQc = max(maxQc, s.a.z);
@@ -1066,7 +1134,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   surfaceStateDst[i2] = vec4<f32>(soil, snow, rain, 0.0);
 
   // Main weather map (cloud, rain, pressure, soil).
-  let cloud01 = clamp(maxQc * 600.0, 0.0, 1.0);
+  // If column is very humid but maxQc is tiny, boost cloud to make it visible.
+  var cloud01 = clamp(maxQc * 600.0, 0.0, 1.0);
   let rain01 = clamp(rain * 800.0, 0.0, 1.0);
   let p01 = clamp(0.5 + pMid * (1.0 / 6000.0), 0.0, 1.0);
   outPixels[weatherOffset() + i2] = packRGBA8(cloud01, rain01, p01, clamp(soil, 0.0, 1.0));
@@ -1074,6 +1143,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Aux map (temp, snow, windU, windV) where wind is (east,north).
   let temp01 = clamp((Tsurf - 240.0) / 70.0, 0.0, 1.0);
   let snow01 = clamp(snow, 0.0, 1.0);
+
+  // If column is very humid/warm (temp01 high) but cloud is tiny, nudge visibility.
+  if (cloud01 < 0.02 && maxQr < 1e-4) {
+    cloud01 = max(cloud01, temp01 * 0.25);
+  }
 
   let basis = makeBasis(dir);
   let windEast = dot(velSample, basis[0]);
