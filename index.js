@@ -6,6 +6,8 @@ import { InputRouter } from './InputRouter.js';
 import { WaterCycleSystem } from './WaterCycleSystem.js';
 import { WaterCycleVolumeSystem } from './WaterCycleVolumeSystem.js';
 import { RainSystem } from './RainSystem.js';
+import { clamp, normalizeHeightmap, smoothHeightmap, isMobileDevice, nextFrame, sampleDataTextureRGBA } from './utils.js';
+import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, PRESETS, MAX_DELTA_TIME } from './constants.js';
 
 const canvas = document.getElementById('viewport');
 const hudEl = document.getElementById('hud');
@@ -118,10 +120,7 @@ const invertLookEl = document.getElementById('invertLook');
 const planetDiameterEl = document.getElementById('planetDiameter');
 const planetDiameterValueEl = document.getElementById('planetDiameterValue');
 
-const DEFAULT_DIAMETER_KM = 1000;
-const PERSON_HEIGHT_M = 2;
-const BASE_RADIUS_UNITS = 10;
-const DEFAULT_RADIUS_M = (DEFAULT_DIAMETER_KM * 1000) * 0.5;
+// Constants now imported from constants.js
 
 const DEFAULT_WEATHER_TEX = (() => {
     const data = new Uint8Array([110, 0, 128, 0]);
@@ -264,7 +263,7 @@ function updateVolumeDebugSprite() {
     volumeDebugSprite.material.needsUpdate = true;
 }
 
-const isMobileDevice = () => window.matchMedia('(max-width: 768px)').matches || /Mobi|Android|iP(ad|hone|od)|IEMobile|BlackBerry|Kindle|Silk|Opera Mini/i.test(navigator.userAgent || '');
+// isMobileDevice now imported from utils.js
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, canvas, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -550,7 +549,7 @@ const presets = {
     }
 };
 
-const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+// nextFrame now imported from utils.js
 const setStatus = (text) => {
     statusEl.textContent = text;
 };
@@ -673,9 +672,7 @@ const atmosphereUniforms = {
     exposure: { value: 1.15 }
 };
 
-function clamp(v, min, max) {
-    return Math.min(Math.max(v, min), max);
-}
+// clamp now imported from utils.js
 
 function getPlanetDiameterKm() {
     if (!planetDiameterEl) return DEFAULT_DIAMETER_KM;
@@ -713,21 +710,6 @@ function getWeatherVolumeMeta() {
     if (!waterCycleSystem?.enabled || !waterCycleSystem.ready || !waterCycleSystem.hasSurface) return null;
     if (typeof waterCycleSystem.getVolumeMeta !== 'function') return null;
     return waterCycleSystem.getVolumeMeta();
-}
-
-function sampleDataTextureRGBA(tex, u, v) {
-    const img = tex?.image;
-    const data = img?.data;
-    const w = img?.width ?? 0;
-    const h = img?.height ?? 0;
-    if (!data || !w || !h) return { r: 0, g: 0, b: 0, a: 0 };
-
-    const uu = ((u % 1) + 1) % 1;
-    const vv = clamp(v, 0, 1);
-    const x = Math.min(w - 1, Math.floor(uu * w));
-    const y = Math.min(h - 1, Math.floor(vv * h));
-    const i = (y * w + x) * 4;
-    return { r: data[i] ?? 0, g: data[i + 1] ?? 0, b: data[i + 2] ?? 0, a: data[i + 3] ?? 0 };
 }
 
 function computeWindWorldFromAux(tex, invScale, planetInvRot, out) {
@@ -903,8 +885,8 @@ function syncMobileVisibility() {
         if (actionColumn) actionColumn.style.display = inTiny ? 'grid' : 'none';
         if (surfaceOnlyBtn) surfaceOnlyBtn.style.display = inTiny ? 'none' : 'inline-flex';
     }
-    // Always show a consistent on-screen reticle (desktop + mobile).
-    if (reticleEl) reticleEl.style.display = 'block';
+    // Hide reticle - no longer needed for orbit or FPS mode.
+    if (reticleEl) reticleEl.style.display = 'none';
 }
 
 function getWalkSpeed() {
@@ -1027,43 +1009,6 @@ function writeSettings(settings) {
     plateDeltaEl.value = settings.plateDelta;
     faultTypeEl.value = settings.faultType;
     updateRangeLabels();
-}
-
-function normalizeHeightmap(buffer) {
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < buffer.length; i++) {
-        const v = buffer[i];
-        if (v < min) min = v;
-        if (v > max) max = v;
-    }
-    const range = Math.max(max - min, 1e-5);
-    for (let i = 0; i < buffer.length; i++) {
-        buffer[i] = (buffer[i] - min) / range;
-    }
-}
-
-function smoothHeightmap(buffer, size, passes = 1) {
-    if (passes <= 0) return;
-    const temp = new Float32Array(buffer.length);
-    for (let p = 0; p < passes; p++) {
-        for (let y = 0; y < size; y++) {
-            const yUp = Math.max(0, y - 1);
-            const yDown = Math.min(size - 1, y + 1);
-            for (let x = 0; x < size; x++) {
-                const left = (x - 1 + size) % size;
-                const right = (x + 1) % size;
-                const idx = y * size + x;
-                const acc = buffer[idx] * 2
-                    + buffer[y * size + left]
-                    + buffer[y * size + right]
-                    + buffer[yUp * size + x]
-                    + buffer[yDown * size + x];
-                temp[idx] = acc / 6;
-            }
-        }
-        buffer.set(temp);
-    }
 }
 
 async function generateWorld(presetKey) {

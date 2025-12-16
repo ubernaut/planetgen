@@ -186,8 +186,50 @@ recent progress:
 
 1. **Complete module integration** - Wire SceneManager, PlanetManager, UIManager into index.js to reduce bloat
 2. **Fix TinyPlanetControls** - Stabilize spawn/orientation issues
-3. **Consolidate duplicates** - Single source of truth for shared utilities
+3. ✅ **Consolidate duplicates** - STARTED 2025-12-16: Created utils.js and constants.js shared modules
 4. **Add tests** - Particularly for control state transitions
 5. **Centralize state** - Simple settings store to decouple UI
 6. **Clean up weather systems** - Abstract common interface
 7. **Wire atmosphere/cloud modules** - Remove duplicate shader code
+
+---
+
+## Refactor Progress (2025-12-16)
+
+### Shared Modules Created
+
+**utils.js** - Common utility functions:
+- `clamp(v, min, max)` - Clamp value to range
+- `lerp(a, b, t)` - Linear interpolation
+- `normalizeHeightmap(buffer)` - Normalize heightmap to 0-1
+- `smoothHeightmap(buffer, size, passes)` - Smooth heightmap with averaging
+- `isMobileDevice()` - Detect mobile/touch devices
+- `nextFrame()` - Promise that resolves on next animation frame
+- `sampleDataTextureRGBA(tex, u, v)` - Sample RGBA from DataTexture
+
+**constants.js** - Magic numbers:
+- `BASE_RADIUS_UNITS = 10` - Base planet radius in scene units
+- `DEFAULT_DIAMETER_KM = 1000` - Default planet diameter in km
+- `DEFAULT_RADIUS_M = 500_000` - Default planet radius in meters
+- `PERSON_HEIGHT_M = 1.8` - Average person height
+- `MAX_DELTA_TIME = 0.25` - Max frame delta to prevent physics jumps
+- `PRESETS` - UI preset definitions
+
+### Updated Files
+
+- **index.js** - Imports utils/constants, removed duplicate definitions for `clamp`, `isMobileDevice`, `nextFrame`, `sampleDataTextureRGBA`, `normalizeHeightmap`, `smoothHeightmap`
+- **PlanetManager.js** - Added imports (local fallbacks still exist)
+- **UIManager.js** - Added imports (local fallbacks still exist)
+
+### Completed (2025-12-16)
+
+- ✅ Removed duplicate `sampleDataTextureRGBA` function from index.js (was causing SyntaxError)
+- ✅ Removed duplicate `normalizeHeightmap` function from index.js (was causing SyntaxError)
+- ✅ Removed duplicate `smoothHeightmap` function from index.js (was causing SyntaxError)
+- ✅ Browser verified: no more declaration errors, app runs successfully
+
+### Remaining Work
+
+- Remove local function fallbacks from PlanetManager.js and UIManager.js
+- Update remaining files (TinyPlanetControls, WaterCycleUtils, etc.) to use shared modules
+- Continue with item #1 (module integration)

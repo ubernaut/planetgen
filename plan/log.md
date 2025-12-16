@@ -52,3 +52,15 @@ llm instructions for this file: this file is a log of development. It's used to 
 - 2025-12-16: Rolled back keyboard handling in InputRouter (now mobile/VR only), restored direct keyboard listeners inside TinyPlanetControls with merged external+local input, and removed orbit keyboard look hooks. Test: `npm test`.
 - 2025-12-16: Fixed TinyPlanet ground movement to respect camera+player orientation (forward now uses combined quaternions projected onto local up) so movement aligns with view direction. Test: `npm test`.
 - 2025-12-16: Applied Quake-style smoothing on TinyPlanet ground movement: reduced speeds, added ground friction/stop speed, acceleration, air control, dt clamp, and moved gravity integration to dt for smoother, continuous motion. Test: `npm test`.
+- 2025-12-16: Removed green reticle from orbit view (no longer needed for landing indicator). Documented deficiencies and refactor targets in branch.md: incomplete module integration (SceneManager/UIManager/PlanetManager exist but unused), duplicate code across files, missing tests, no centralized state.
+- 2025-12-16: HIGH PRIORITY REFACTOR - Created shared modules to consolidate duplicate code:
+  - Created utils.js with common utility functions: clamp(), lerp(), normalizeHeightmap(), smoothHeightmap(), isMobileDevice(), nextFrame(), sampleDataTextureRGBA()
+  - Created constants.js with magic numbers: BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, PRESETS, MAX_DELTA_TIME
+  - Updated index.js to import from these modules and removed duplicate local definitions for clamp, isMobileDevice, nextFrame
+  - PlanetManager.js and UIManager.js updated to import from utils.js and constants.js (local fallbacks still exist but can be removed in future passes)
+  - STATUS: COMPLETE - browser verified, app runs without errors
+- 2025-12-16: REFACTOR COMPLETED - Removed remaining duplicate function declarations from index.js that were causing SyntaxError "Identifier already declared":
+  - Removed duplicate sampleDataTextureRGBA() - now imported from utils.js
+  - Removed duplicate normalizeHeightmap() - now imported from utils.js
+  - Removed duplicate smoothHeightmap() - now imported from utils.js
+  - Browser verified: no more declaration errors, app runs successfully

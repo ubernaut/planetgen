@@ -1,3 +1,6 @@
+import { clamp } from './utils.js';
+import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM } from './constants.js';
+
 export class UIManager {
     constructor(callbacks) {
         this.callbacks = callbacks || {};

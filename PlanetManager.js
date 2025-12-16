@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PlanetForge } from './worldgen.js';
 import { AtmosphereSystem } from './AtmosphereSystem.js';
 import { CloudSystem } from './CloudSystem.js';
+import { normalizeHeightmap, smoothHeightmap } from './utils.js';
+import { DEFAULT_DIAMETER_KM } from './constants.js';
 
 export class PlanetManager {
     constructor(sceneManager) {
