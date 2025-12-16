@@ -271,12 +271,66 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x05070f);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05070f);
 scene.fog = new THREE.Fog(0x05070f, 30, 120);
 const planetGroup = new THREE.Group();
 scene.add(planetGroup);
+let moon = null;
+let moonOrbitPhase = 0;
+const moonUniforms = {
+    sunDir: { value: new THREE.Vector3(0, 1, 0) }
+};
+let landingMarker = null;
+function rebuildMoon() {
+    if (moon) {
+        scene.remove(moon);
+        moon.geometry.dispose();
+        moon.material.dispose?.();
+    }
+    const radiusUnits = Math.max(0.05, (lastPlanetSettings?.radius ?? BASE_RADIUS_UNITS) * 0.2);
+    const geom = new THREE.SphereGeometry(radiusUnits, 96, 48);
+    // Crater displacement: generate random crater centers for round pits.
+    const craterCount = 42;
+    const centers = [];
+    for (let i = 0; i < craterCount; i++) {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const s = Math.sin(phi);
+        centers.push(new THREE.Vector3(Math.cos(theta) * s, Math.cos(phi), Math.sin(theta) * s));
+    }
+    const pos = geom.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).normalize();
+        let depth = 0;
+        for (const c of centers) {
+            const d = v.angleTo(c);
+            if (d < 0.25) {
+                const t = 1 - d / 0.25;
+                depth -= t * t * 0.08;
+            }
+        }
+        v.multiplyScalar(1 + depth);
+        pos.setXYZ(i, v.x * radiusUnits, v.y * radiusUnits, v.z * radiusUnits);
+    }
+    pos.needsUpdate = true;
+    geom.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0xe0e6ed,
+        roughness: 0.7,
+        metalness: 0.0,
+        emissive: new THREE.Color(0xffffff),
+        emissiveIntensity: 0.15
+    });
+    moon = new THREE.Mesh(geom, mat);
+    moon.castShadow = true;
+    moon.receiveShadow = true;
+    scene.add(moon);
+}
 
 const userGroup = new THREE.Group();
 scene.add(userGroup);
@@ -296,6 +350,7 @@ controls.maxDistance = 60;
 
 const input = new InputRouter();
 input.setMode(isMobileDevice() ? 'mobile' : 'desktop');
+input.setLookMode('orbit');
 
 const tinyControls = new TinyPlanetControls(camera, renderer.domElement, scene, () => {
     controls.enabled = true;
@@ -306,12 +361,17 @@ const tinyControls = new TinyPlanetControls(camera, renderer.domElement, scene, 
         savedOrbitState = null;
     }
     updateOrbitBounds();
+    input.setLookMode('orbit');
 }, input);
 const clock = new THREE.Clock();
 
-scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.9));
+scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.0009));
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
 dirLight.position.set(12, 16, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 200;
 scene.add(dirLight);
 
 scene.add(buildStarfield());
@@ -350,8 +410,24 @@ const weatherWindWorld = new THREE.Vector3();
 let volumeDebugEnabled = false;
 let volumeDebugSlice = 0;
 let volumeSliceTexture = null;
+let fpsDiv = null;
+let fpsSMA = 60;
 
 const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
+
+fpsDiv = document.createElement('div');
+fpsDiv.style.position = 'fixed';
+fpsDiv.style.top = '8px';
+fpsDiv.style.right = '60px';
+fpsDiv.style.padding = '4px 8px';
+fpsDiv.style.background = 'rgba(0,0,0,0.35)';
+fpsDiv.style.color = '#fff';
+fpsDiv.style.fontSize = '12px';
+fpsDiv.style.fontFamily = 'monospace';
+fpsDiv.style.borderRadius = '6px';
+fpsDiv.style.pointerEvents = 'none';
+fpsDiv.textContent = 'fps: --';
+document.body.appendChild(fpsDiv);
 
 window.addEventListener('mousedown', (event) => {
     if (event.button === 1) { // Middle Click
@@ -391,6 +467,7 @@ function handleSurfaceAction() {
         return;
     }
     if (!planet) return;
+    input.setLookMode('surface');
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const hit = raycaster.intersectObject(planet, false);
     if (hit.length) {
@@ -1082,6 +1159,7 @@ async function generateWorld(presetKey) {
         }
         rebuildClouds(sunDir);
         rebuildWaterCycleClouds(sunDir);
+        rebuildMoon();
         applyPlanetScale();
 
         setStatus(`${settings.resolution}² map · ${settings.iterations.toLocaleString()} steps`);
@@ -1820,9 +1898,15 @@ function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planet
                 float h = (r - innerRadius) / max(outerRadius - innerRadius, 1e-3);
                 float profile = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.55, 1.0, h));
 
+                // Slight atlas smoothing to hide voxel seams at high res.
                 vec4 v = sampleVolumeTrilinear(pos);
-                float cloud = v.r;
-                float rain = v.g;
+                vec4 v2 = sampleVolumeTrilinear(pos + vec3(0.3, -0.2, 0.15) * metersPerUnit * 0.25);
+                vec4 v3 = sampleVolumeTrilinear(pos + vec3(-0.25, 0.18, -0.22) * metersPerUnit * 0.35);
+                vec4 v4 = sampleVolumeTrilinear(pos + vec3(0.12, 0.24, -0.3) * metersPerUnit * 0.2);
+                vec4 vMix = (v + v2 + v3 + v4) * 0.25;
+
+                float cloud = vMix.r;
+                float rain = vMix.g;
                 rainOut = rain;
 
                 float cover = cloud * (0.45 + quantity * 1.1);
@@ -2137,6 +2221,16 @@ function renderCloudLayerControls() {
     }
 }
 
+function ensureLandingMarker() {
+    if (landingMarker) return landingMarker;
+    const ring = new THREE.RingGeometry(0.15, 0.18, 32);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8, depthWrite: false });
+    landingMarker = new THREE.Mesh(ring, mat);
+    landingMarker.visible = false;
+    scene.add(landingMarker);
+    return landingMarker;
+}
+
 function onResize() {
     const { innerWidth, innerHeight } = window;
     camera.aspect = innerWidth / innerHeight;
@@ -2146,6 +2240,23 @@ function onResize() {
         input.setMode(isMobileDevice() ? 'mobile' : 'desktop');
     }
     syncMobileVisibility();
+}
+
+function applyOrbitLookDelta(look) {
+    const { x, y } = look;
+    if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) return;
+    const target = controls.target;
+    const offset = camera.position.clone().sub(target);
+    const yaw = -x * 0.01;
+    const pitch = -y * 0.01;
+    const up = new THREE.Vector3(0, 1, 0);
+    const quatYaw = new THREE.Quaternion().setFromAxisAngle(up, yaw);
+    offset.applyQuaternion(quatYaw);
+    const right = new THREE.Vector3().crossVectors(up, offset).normalize();
+    const quatPitch = new THREE.Quaternion().setFromAxisAngle(right, pitch);
+    offset.applyQuaternion(quatPitch);
+    camera.position.copy(target).add(offset);
+    camera.lookAt(target);
 }
 
 function updateWeatherFrame() {
@@ -2174,8 +2285,32 @@ function updateWeatherFrame() {
     return invScale;
 }
 
+function updateMoon(delta) {
+    if (!moon) return;
+    const radiusUnits = Math.max(0.05, (lastPlanetSettings?.radius ?? BASE_RADIUS_UNITS) * 0.2);
+    const orbitRadius = Math.max(3, (lastPlanetSettings?.radius ?? BASE_RADIUS_UNITS) * 4);
+    const orbitIncline = THREE.MathUtils.degToRad(8.0);
+    moonOrbitPhase += delta * 0.02; // slower drift
+    const cosP = Math.cos(moonOrbitPhase);
+    const sinP = Math.sin(moonOrbitPhase);
+    const x = orbitRadius * cosP;
+    const y = orbitRadius * Math.sin(orbitIncline) * sinP;
+    const z = orbitRadius * Math.cos(orbitIncline) * sinP;
+    moon.position.set(x, y, z);
+    moon.lookAt(planetGroup.position);
+    moonUniforms.sunDir.value.copy(weatherSunWorld);
+    updateMoonMaterialForPhase();
+    // Aim the light shadow camera to include moon + planet.
+    dirLight.target.position.set(0, 0, 0);
+    dirLight.target.updateMatrixWorld();
+}
+
 function animate() {
     const delta = clock.getDelta();
+    // FPS overlay (simple EMA).
+    const fps = delta > 1e-6 ? 1 / delta : 0;
+    fpsSMA = fpsSMA * 0.9 + fps * 0.1;
+    if (fpsDiv) fpsDiv.textContent = `fps: ${fpsSMA.toFixed(1)}`;
     
     updateRangeLabels();
     
@@ -2186,15 +2321,36 @@ function animate() {
     if (tinyControls.enabled) {
         tinyControls.update(delta);
     } else {
+        if (input.consume('surface')) {
+            handleSurfaceAction();
+        }
         if (planet && !generating) {
             planet.rotation.y += 0.0009;
         }
         controls.update();
+        // Apply orbit look from keyboard arrows via InputRouter.
+        applyOrbitLookDelta(input.consumeLookDelta());
     }
     syncMobileVisibility();
 
     // Planet-local sun direction (for water cycle + cloud sampling)
     const invScale = updateWeatherFrame();
+    updateMoon(delta);
+    // Update landing marker (orbit view).
+    ensureLandingMarker();
+    if (!tinyControls.enabled && planet) {
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+        const hit = raycaster.intersectObject(planet, false);
+        if (hit.length) {
+            landingMarker.visible = true;
+            landingMarker.position.copy(hit[0].point);
+            landingMarker.lookAt(camera.position);
+        } else {
+            landingMarker.visible = false;
+        }
+    } else if (landingMarker) {
+        landingMarker.visible = false;
+    }
     const runWeather = (waterCycleToggleEl?.checked ?? false) && (waterCycleRunEl?.checked ?? true);
     if (runWeather && waterCycleSystem?.enabled) {
         waterCycleSystem.update(delta, weatherSunLocal);
@@ -2699,3 +2855,14 @@ renderCloudLayerControls();
 bindMobileControls();
 renderer.setAnimationLoop(animate);
 checkVRSupport();
+function updateMoonMaterialForPhase() {
+    if (!moon) return;
+    const dirToSun = new THREE.Vector3().copy(weatherSunWorld).normalize().multiplyScalar(-1);
+    const viewDir = new THREE.Vector3().copy(camera.position).sub(moon.position).normalize();
+    // Phase factor based on angle between sun direction and view.
+    const phase = Math.max(0, dirToSun.dot(viewDir));
+    const mat = moon.material;
+    mat.emissiveIntensity = 0.0;
+    mat.color.setScalar(0.75 + 0.25 * phase);
+    mat.needsUpdate = true;
+}

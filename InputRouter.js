@@ -19,6 +19,7 @@ export class InputRouter {
         this.once = new Set();
         this.lookDelta = { x: 0, y: 0 };
         this.mode = 'desktop';
+        this.lookMode = 'orbit'; // 'orbit' or 'surface'
         this.onKeyDown = this.onKeyDown.bind(this);
         this.onKeyUp = this.onKeyUp.bind(this);
         this.target.addEventListener('keydown', this.onKeyDown);
@@ -29,23 +30,32 @@ export class InputRouter {
         this.mode = mode;
     }
 
+    setLookMode(mode) {
+        this.lookMode = mode;
+    }
+
     onKeyDown(event) {
         const { code, repeat } = event;
         switch (code) {
             case 'KeyW':
             case 'ArrowUp':
+                // Arrow keys always control look.
+                if (code === 'ArrowUp') { this.addLookDelta(0, -5); break; }
                 this.state.forward = true;
                 break;
             case 'KeyS':
             case 'ArrowDown':
+                if (code === 'ArrowDown') { this.addLookDelta(0, 5); break; }
                 this.state.backward = true;
                 break;
             case 'KeyA':
             case 'ArrowLeft':
+                if (code === 'ArrowLeft') { this.addLookDelta(-5, 0); break; }
                 this.state.left = true;
                 break;
             case 'KeyD':
             case 'ArrowRight':
+                if (code === 'ArrowRight') { this.addLookDelta(5, 0); break; }
                 this.state.right = true;
                 break;
             case 'Space':
@@ -68,6 +78,9 @@ export class InputRouter {
                 break;
             case 'KeyF':
                 if (!repeat) this.once.add('flyToggle');
+                break;
+            case 'Enter':
+                if (!repeat) this.once.add('surface');
                 break;
             case 'Escape':
                 if (!repeat) this.once.add('exit');

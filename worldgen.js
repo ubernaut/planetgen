@@ -330,6 +330,9 @@ export class PlanetForge {
                     vDir = normalize(transformed);
                     vWater = waterMask;
                     vSlope = 1.0 - dot(normalize(normal), normalize(position));
+                    float rough = smoothstep(0.2, 0.7, vSlope);
+                    float rockNoise = sin(dot(position.xyz, vec3(12.9898,78.233,37.719))) * 0.5 + 0.5;
+                    transformed += normalize(normal) * rockNoise * rough * 0.08;
                     `
                 );
                 shader.fragmentShader = `
@@ -370,7 +373,7 @@ export class PlanetForge {
                     vec3 deep = vec3(0.01, 0.04, 0.12);
                     vec3 shallow = vec3(0.04, 0.20, 0.40);
                     vec3 grass = vec3(0.12, 0.44, 0.18);
-                    vec3 rock = vec3(0.38, 0.32, 0.26);
+                    vec3 rock = vec3(0.45, 0.45, 0.45);
                     vec3 snow = vec3(1.0, 1.0, 1.0);
                     vec3 col;
                     float waterFactor = vWater;

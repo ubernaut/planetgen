@@ -429,6 +429,8 @@ export class WaterCycleVolumeSystem {
         this.simTimeS = 0;
         this.readbackTimerS = 0;
         this.ping = 0;
+
+        this.lastDiag = { maxCloud: 0, maxRain: 0 };
     }
 
     update(deltaSeconds, sunDirLocal, opts = {}) {
@@ -527,6 +529,16 @@ export class WaterCycleVolumeSystem {
             this.volumeTextureData.set(bytes.subarray(0, atlasByteCount));
             this.weatherTextureData.set(bytes.subarray(atlasByteCount, atlasByteCount + weatherByteCount));
             this.auxTextureData.set(bytes.subarray(atlasByteCount + weatherByteCount, atlasByteCount + weatherByteCount * 2));
+
+            // Simple diagnostics: track max cloud/rain in the atlas for visibility tuning.
+            let maxCloud = 0;
+            let maxRain = 0;
+            for (let i = 0; i < atlasByteCount; i += 4) {
+                if (this.volumeTextureData[i] > maxCloud) maxCloud = this.volumeTextureData[i];
+                if (this.volumeTextureData[i + 1] > maxRain) maxRain = this.volumeTextureData[i + 1];
+            }
+            this.lastDiag.maxCloud = maxCloud / 255;
+            this.lastDiag.maxRain = maxRain / 255;
 
             buf.unmap();
             this.volumeAtlasTexture.needsUpdate = true;
@@ -1105,6 +1117,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var soil = clamp(ss0.x, 0.0, 1.0);
   var snow = clamp(ss0.y, 0.0, 1.0);
   var rain = clamp(ss0.z, 0.0, 0.02);
+  var runoff = clamp(ss0.w, 0.0, 1.0);
 
   // Integrate along the column to form 2D maps.
   var maxQc = 0.0;
@@ -1141,8 +1154,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let melt = min(snow, snow * meltFactor * dt() * (1.0 / 21600.0));
   snow -= melt;
   soil = clamp(soil + melt * (1.0 - ocean) * 0.65, 0.0, 1.0);
+  runoff = clamp(runoff + prLiquid * 120.0 + prSnow * 80.0 + melt * 60.0, 0.0, 5.0);
+  runoff *= exp(-dt() * (1.0 / 172800.0)); // 2-day decay
+  // Glacier formation proxy: excess snow turns into slow-decay runoff/glacier store.
+  let glacier = max(0.0, snow - 1.0);
+  snow = min(snow, 1.0);
+  runoff = min(runoff + glacier * 0.2, 5.0);
 
-  surfaceStateDst[i2] = vec4<f32>(soil, snow, rain, 0.0);
+  surfaceStateDst[i2] = vec4<f32>(soil, snow, rain, runoff);
 
   // Main weather map (cloud, rain, pressure, soil).
   // If column is very humid but maxQc is tiny, boost cloud to make it visible.

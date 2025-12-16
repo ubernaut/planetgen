@@ -98,6 +98,10 @@ export class TinyPlanetControls {
         this.verticalVelocity = 0;
         this.isFlying = false;
 
+        if (this.externalInput && this.externalInput.setLookMode) {
+            this.externalInput.setLookMode('surface');
+        }
+
         // Lock pointer (desktop only)
         const isMobile = /Mobi|Android|iP(ad|hone|od)/i.test(navigator.userAgent || '');
         if (!isMobile && this.domElement.requestPointerLock) {
@@ -129,6 +133,7 @@ export class TinyPlanetControls {
 
         if (this.externalInput) {
             this.externalInput.clear();
+            if (this.externalInput.setLookMode) this.externalInput.setLookMode('orbit');
         }
     }
 
@@ -160,12 +165,22 @@ export class TinyPlanetControls {
     onKeyDown(event) {
         switch (event.code) {
             case 'ArrowUp':
-            case 'KeyW': this.moveForward = true; break;
-            case 'ArrowLeft':
-            case 'KeyA': this.moveLeft = true; break;
+                this.camera.rotateX(-0.02);
+                this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
+                break;
             case 'ArrowDown':
-            case 'KeyS': this.moveBackward = true; break;
+                this.camera.rotateX(0.02);
+                this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
+                break;
+            case 'ArrowLeft':
+                this.player.rotateY(0.03);
+                break;
             case 'ArrowRight':
+                this.player.rotateY(-0.03);
+                break;
+            case 'KeyW': this.moveForward = true; break;
+            case 'KeyA': this.moveLeft = true; break;
+            case 'KeyS': this.moveBackward = true; break;
             case 'KeyD': this.moveRight = true; break;
             case 'Space': 
                 if(this.isFlying) this.moveUp = true;
@@ -185,13 +200,9 @@ export class TinyPlanetControls {
 
     onKeyUp(event) {
         switch (event.code) {
-            case 'ArrowUp':
             case 'KeyW': this.moveForward = false; break;
-            case 'ArrowLeft':
             case 'KeyA': this.moveLeft = false; break;
-            case 'ArrowDown':
             case 'KeyS': this.moveBackward = false; break;
-            case 'ArrowRight':
             case 'KeyD': this.moveRight = false; break;
             case 'Space': this.moveUp = false; break;
             case 'ControlLeft': this.moveDown = false; break;
@@ -346,120 +357,63 @@ export class TinyPlanetControls {
         else if (this.isSwimming) speed = this.swimSpeed;
         else if (this.isRunning) speed = this.runSpeed;
 
-        this.direction.z = Number(this.moveForward) - Number(this.moveBackward);
-        this.direction.x = Number(this.moveRight) - Number(this.moveLeft);
-        this.direction.normalize();
-
-        if (this.moveForward || this.moveBackward) this.velocity.z += this.direction.z * speed * delta;
-        if (this.moveLeft || this.moveRight) this.velocity.x -= this.direction.x * speed * delta;
+        const moveVec = new THREE.Vector3();
+        if (this.moveForward) moveVec.z -= 1;
+        if (this.moveBackward) moveVec.z += 1;
+        if (this.moveLeft) moveVec.x -= 1;
+        if (this.moveRight) moveVec.x += 1;
+        moveVec.normalize();
 
         if (this.isFlying || this.isSwimming) {
-             const moveVec = new THREE.Vector3();
-             if (this.moveForward) moveVec.z -= 1;
-             if (this.moveBackward) moveVec.z += 1;
-             if (this.moveLeft) moveVec.x -= 1;
-             if (this.moveRight) moveVec.x += 1;
-             if (this.moveUp) moveVec.y += 1;
-             if (this.moveDown) moveVec.y -= 1;
-             moveVec.normalize().multiplyScalar(speed * delta);
-             
-             // Transform Camera Local -> Player Local -> Planet Local
-             moveVec.applyQuaternion(this.camera.quaternion);
-             moveVec.applyQuaternion(this.player.quaternion); 
-             
-             this.player.position.add(moveVec);
-             
-             // Roll
-             const roll = Number(this.rollLeft) - Number(this.rollRight);
-             if (roll !== 0) {
-                 this.camera.rotateZ(roll * 2.0 * delta);
-             }
-             
-             // Keep player upright (gravity align) even when swimming/flying
-             // But allow free movement
-             if (this.isSwimming) {
-                 // In swim mode, maybe dampen vertical velocity or handle buoyancy?
-                 // For "like flying", we just use the moveVec logic above which moves in camera direction
-             }
-
+            const mv = moveVec.clone().multiplyScalar(speed * delta);
+            mv.applyQuaternion(this.camera.quaternion);
+            mv.applyQuaternion(this.player.quaternion); 
+            this.player.position.add(mv);
+            const roll = Number(this.rollLeft) - Number(this.rollRight);
+            if (roll !== 0) this.camera.rotateZ(roll * 2.0 * delta);
         } else {
-            // Walking
-            this.player.translateX(-this.velocity.x * delta);
-            this.player.translateZ(-this.velocity.z * delta);
+            const up = this.player.position.clone().normalize();
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).projectOnPlane(up).normalize();
+            const right = new THREE.Vector3().crossVectors(forward, up).normalize();
+            const walk = new THREE.Vector3();
+            walk.addScaledVector(forward, moveVec.z);
+            walk.addScaledVector(right, moveVec.x);
+            if (walk.lengthSq() > 1e-6) {
+                walk.normalize().multiplyScalar(speed * delta);
+                this.player.position.add(walk);
+            }
 
             this.verticalVelocity -= this.gravity * delta;
-            
-            // Terrain Following
-            // Use heightmap sampling for O(1) performance
-            let targetHeight = 0;
-            
+            this.player.translateY(this.verticalVelocity * delta);
+
+            let targetHeight = this.planetRadius;
             const forge = this.planetMesh.userData.forge;
             const settings = this.planetMesh.userData.settings;
-
             if (forge && settings) {
-                // Dir from Center (0,0,0) to Player
-                // Since Player is child of Planet, player.position is Local.
                 const dir = this.player.position.clone().normalize();
-                
-                // Get 0-1 height from heightmap
                 const rawHeight = forge.getHeightAt(dir);
-                
-                // Target Height in GEOMETRY Units (Local Space)
                 targetHeight = settings.radius + (rawHeight - settings.seaLevel) * settings.heightScale;
-
-                // Check for ice walking
-                this.player.getWorldPosition(this.dummyVec);
-                const pole = Math.abs(this.dummyVec.normalize().y);
-                const iceStart = Math.max(0.0, Math.min(1.0, 1.0 - settings.iceCap));
-                
-                if (pole > iceStart) {
-                    // Check Global Ocean
-                    // Match buildWaterMesh logic in index.js: radius + ((seaLevel - 0.5) * heightScale)
-                    const oceanRadius = settings.radius + (settings.seaLevel - 0.5) * settings.heightScale;
-                    
-                    if (targetHeight < oceanRadius) {
-                        targetHeight = oceanRadius;
-                    }
-
-                    // Check Freshwater
-                    const waterData = forge.getWaterDataAt(dir);
-                    if (waterData.hasWater) {
-                        const waterSurfaceHeight = settings.radius + (waterData.waterHeight - settings.seaLevel) * settings.heightScale;
-                        // If ice is higher than terrain (e.g. over ocean/lake), walk on it
-                        if (waterSurfaceHeight > targetHeight) {
-                            targetHeight = waterSurfaceHeight;
-                        }
-                    }
-                }
-            } else {
-                // Fallback
-                targetHeight = this.planetRadius;
             }
 
-            const distFromCenter = this.player.position.length();
-            
-            // Player height on top of terrain
-            const floorHeight = targetHeight + this.playerHeight;
-            
-            let currentHeight = distFromCenter + this.verticalVelocity * delta;
-            
-            if (currentHeight < floorHeight) {
-                currentHeight = floorHeight;
+            const currentHeight = this.player.position.length();
+            const isOnGround = currentHeight <= targetHeight + 0.05;
+            if (isOnGround) {
+                this.verticalVelocity = Math.max(0, this.verticalVelocity);
+                this.canJump = true;
+            }
+
+            if (this.player.position.length() < targetHeight) {
+                const dir = this.player.position.clone().normalize();
+                this.player.position.copy(dir.multiplyScalar(targetHeight + this.playerHeight));
                 this.verticalVelocity = 0;
                 this.canJump = true;
-            } else {
-                this.canJump = false;
             }
-            
-            // Apply height (Local Space)
-            this.player.position.setLength(currentHeight);
-            
-            // Re-align to gravity (Local Space)
-            const newUp = this.player.position.clone().normalize();
-            const alignQuaternion = new THREE.Quaternion();
-            alignQuaternion.setFromUnitVectors(this.player.up, newUp);
-            this.player.quaternion.premultiply(alignQuaternion);
-            this.player.up.copy(newUp);
+
+            const upNow = this.player.position.clone().normalize();
+            const realign = new THREE.Quaternion().setFromUnitVectors(this.player.up, upNow);
+            this.player.quaternion.premultiply(realign);
+            this.player.up.copy(upNow);
+            this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
         }
     }
 }
