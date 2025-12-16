@@ -64,3 +64,9 @@ llm instructions for this file: this file is a log of development. It's used to 
   - Removed duplicate normalizeHeightmap() - now imported from utils.js
   - Removed duplicate smoothHeightmap() - now imported from utils.js
   - Browser verified: no more declaration errors, app runs successfully
+- 2025-12-16: REFACTOR PASS 2 - Continued consolidation of shared modules across codebase:
+  - PlanetManager.js: Removed local normalizeHeightmap()/smoothHeightmap() methods, now uses imports from utils.js; using imported DEFAULT_DIAMETER_KM constant
+  - UIManager.js: Removed local clamp() method and BASE_RADIUS_UNITS/DEFAULT_DIAMETER_KM properties, now uses imports
+  - WaterCycleUtils.js: Removed local clamp() function, now imports from utils.js (re-exports for backward compat)
+  - TinyPlanetControls.js: Now imports BASE_RADIUS_UNITS from constants.js instead of hardcoding 10
+  - Browser verified: all changes work correctly, no errors

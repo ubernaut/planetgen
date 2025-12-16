@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BASE_RADIUS_UNITS } from './constants.js';
 
 export class TinyPlanetControls {
     constructor(camera, domElement, scene, onExit, inputMultiplexer = null) {
@@ -12,7 +13,7 @@ export class TinyPlanetControls {
         this.surfaceRay = new THREE.Raycaster();
 
         // Configuration
-        this.planetRadius = 10; // Base radius from worldgen
+        this.planetRadius = BASE_RADIUS_UNITS;
         this.walkSpeed = 3.5;
         this.runSpeed = 6.5;
         this.flySpeed = 8.0;

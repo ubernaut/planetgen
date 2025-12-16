@@ -227,9 +227,13 @@ recent progress:
 - ✅ Removed duplicate `normalizeHeightmap` function from index.js (was causing SyntaxError)
 - ✅ Removed duplicate `smoothHeightmap` function from index.js (was causing SyntaxError)
 - ✅ Browser verified: no more declaration errors, app runs successfully
+- ✅ PlanetManager.js: Removed local `normalizeHeightmap()` and `smoothHeightmap()` methods, now uses imports from utils.js
+- ✅ PlanetManager.js: Using imported `DEFAULT_DIAMETER_KM` constant instead of local definition
+- ✅ UIManager.js: Removed local `clamp()` method, now uses import from utils.js
+- ✅ UIManager.js: Removed local `BASE_RADIUS_UNITS` and `DEFAULT_DIAMETER_KM` properties, now uses imports from constants.js
+- ✅ Browser verified: all changes work, no errors
 
 ### Remaining Work
 
-- Remove local function fallbacks from PlanetManager.js and UIManager.js
-- Update remaining files (TinyPlanetControls, WaterCycleUtils, etc.) to use shared modules
-- Continue with item #1 (module integration)
+- Continue with item #1 (module integration) - Wire SceneManager, PlanetManager, UIManager into index.js
+- Add more constants for physics values (walkSpeed, gravity, etc.) in TinyPlanetControls

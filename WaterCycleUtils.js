@@ -1,10 +1,7 @@
-export function clamp(v, lo, hi) {
-    return Math.min(Math.max(v, lo), hi);
-}
+import { clamp, clamp01 } from './utils.js';
 
-export function clamp01(v) {
-    return clamp(v, 0, 1);
-}
+// Re-export clamp and clamp01 for backward compatibility
+export { clamp, clamp01 };
 
 export function directionFromLatLon(latRad, lonRad) {
     const cosLat = Math.cos(latRad);
@@ -80,4 +77,3 @@ export function buildSurfaceFields({ heightmap, size, seaLevel, gridWidth, gridH
 
     return surface;
 }
-

@@ -15,6 +15,15 @@ export function clamp(v, min, max) {
 }
 
 /**
+ * Clamp a value between 0 and 1
+ * @param {number} v - Value to clamp
+ * @returns {number} Clamped value (0-1)
+ */
+export function clamp01(v) {
+    return clamp(v, 0, 1);
+}
+
+/**
  * Linear interpolation between two values
  * @param {number} a - Start value
  * @param {number} b - End value
