@@ -19,6 +19,7 @@ llm instructions for this file: this file contains the high level project plan. 
     * v1.2: visual rain FX + rain haze + wind-advected cloud detail (implemented)
     * v1.3: configurable moisture layers (1–4) (implemented)
     * v2: true 3D voxel atmosphere + volume-atlas clouds (in progress)
+    * v2+: seasons/moon: physical sun/moon with axial tilt/orbit for seasons + moon phases; couple precip to surface moisture/biomes/erosion/rivers/lakes; physical snow accumulation and glaciers
 
 * solar system section:
     * material distribution

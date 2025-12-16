@@ -69,6 +69,12 @@ const waterCycleStepBtn = document.getElementById('waterCycleStep');
 const weatherSimModeEl = document.getElementById('weatherSimMode');
 const weatherVolumeResEl = document.getElementById('weatherVolumeRes');
 const weatherVolumeResValueEl = document.getElementById('weatherVolumeResValue');
+const weatherAtmoThicknessEl = document.getElementById('weatherAtmoThickness');
+const weatherAtmoThicknessValueEl = document.getElementById('weatherAtmoThicknessValue');
+const axialTiltEl = document.getElementById('axialTilt');
+const axialTiltValueEl = document.getElementById('axialTiltValue');
+const seasonProgressEl = document.getElementById('seasonProgress');
+const seasonProgressValueEl = document.getElementById('seasonProgressValue');
 const weatherDebugEl = document.getElementById('weatherDebug');
 const volumeSliceEl = document.getElementById('volumeSlice');
 const volumeSliceValueEl = document.getElementById('volumeSliceValue');
@@ -851,6 +857,9 @@ function updateRangeLabels() {
     if (weatherSpeedEl && weatherSpeedValueEl) weatherSpeedValueEl.textContent = Number(weatherSpeedEl.value).toFixed(0);
     if (weatherUpdateHzEl && weatherUpdateHzValueEl) weatherUpdateHzValueEl.textContent = Number(weatherUpdateHzEl.value).toFixed(0);
     if (weatherVolumeResEl && weatherVolumeResValueEl) weatherVolumeResValueEl.textContent = Number(weatherVolumeResEl.value).toFixed(0);
+    if (weatherAtmoThicknessEl && weatherAtmoThicknessValueEl) weatherAtmoThicknessValueEl.textContent = Number(weatherAtmoThicknessEl.value).toFixed(0);
+    if (axialTiltEl && axialTiltValueEl) axialTiltValueEl.textContent = Number(axialTiltEl.value).toFixed(1);
+    if (seasonProgressEl && seasonProgressValueEl) seasonProgressValueEl.textContent = Number(seasonProgressEl.value).toFixed(2);
     if (weatherMoistureLayersEl && weatherMoistureLayersValueEl) weatherMoistureLayersValueEl.textContent = Number(weatherMoistureLayersEl.value).toFixed(0);
     if (weatherEvapEl && weatherEvapValueEl) weatherEvapValueEl.textContent = Number(weatherEvapEl.value).toFixed(2);
     if (weatherPrecipEl && weatherPrecipValueEl) weatherPrecipValueEl.textContent = Number(weatherPrecipEl.value).toFixed(2);
@@ -1864,14 +1873,16 @@ function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planet
                 }
                 if (tEnd <= tStart) discard;
 
-                const int STEPS = 28;
-                float stepSize = (tEnd - tStart) / float(STEPS);
+                // More steps for higher volume resolutions to accumulate enough opacity.
+                int steps = int(clamp(mix(28.0, 48.0, clamp((volumeN - 32.0) / 96.0, 0.0, 1.0)), 28.0, 48.0));
+                float stepSize = (tEnd - tStart) / float(steps);
                 vec3 sum = vec3(0.0);
                 float alpha = 0.0;
 
                 vec3 sunLocal = normalize(planetInvRot * sunDir);
 
-                for (int i = 0; i < STEPS; i++) {
+                for (int i = 0; i < 48; i++) { // 48 is the max; exit early if steps smaller.
+                    if (i >= steps) break;
                     float t = tStart + (float(i) + 0.5) * stepSize;
                     vec3 pos = ro + rd * t;
 
@@ -2139,6 +2150,15 @@ function onResize() {
 
 function updateWeatherFrame() {
     const invScale = planetGroup.scale.x ? (1 / planetGroup.scale.x) : 1;
+
+    // Update sun direction from axial tilt + season phase.
+    const tiltDeg = clamp(parseFloat(axialTiltEl?.value) || 23.4, 0, 45);
+    const season = clamp(parseFloat(seasonProgressEl?.value) || 0, 0, 1);
+    const tiltRad = THREE.MathUtils.degToRad(tiltDeg);
+    const seasonAng = season * Math.PI * 2;
+    const decl = tiltRad * Math.sin(seasonAng);
+    const sunVec = new THREE.Vector3(Math.cos(decl), Math.sin(decl), 0.6).normalize().multiplyScalar(16);
+    dirLight.position.copy(sunVec);
 
     weatherSunWorld.copy(dirLight.position).normalize();
     weatherInvRot.identity();
@@ -2568,6 +2588,10 @@ function applyWaterCycleConfig() {
         : 0;
     const debugVolume = debugKey === 'volume';
 
+    const atmoThicknessKm = clamp(parseFloat(weatherAtmoThicknessEl?.value) || 20, 5, 60);
+    const axialTiltDeg = clamp(parseFloat(axialTiltEl?.value) || 23.4, 0, 45);
+    const seasonPhase = clamp(parseFloat(seasonProgressEl?.value) || 0, 0, 1);
+
     if (waterCycleSystem?.enabled && waterCycleSystem.ready) {
         const cfg = {
             timeScale: minutesPerSec * 60,
@@ -2575,7 +2599,10 @@ function applyWaterCycleConfig() {
             evapStrength,
             precipStrength,
             windStrength,
-            oceanInertia
+            oceanInertia,
+            atmoThicknessM: atmoThicknessKm * 1000,
+            axialTiltDeg,
+            seasonPhase
         };
         if (mode === '2d') cfg.moistureLayers = moistureLayers;
         waterCycleSystem.setConfig(cfg);
@@ -2627,7 +2654,7 @@ function handleWaterCycleUpdate() {
     el.addEventListener(el.type === 'color' ? 'input' : 'change', handleCloudUpdate);
     if (el.type === 'range') el.addEventListener('input', handleCloudUpdate);
 });
-[waterCycleToggleEl, waterCycleCloudToggleEl, waterCycleRunEl, weatherSimModeEl, weatherVolumeResEl, weatherDebugEl, weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
+[waterCycleToggleEl, waterCycleCloudToggleEl, waterCycleRunEl, weatherSimModeEl, weatherVolumeResEl, weatherAtmoThicknessEl, weatherDebugEl, weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
     if (!el) return;
     el.addEventListener(el.type === 'checkbox' ? 'change' : (el.type === 'color' ? 'input' : 'change'), handleWaterCycleUpdate);
     if (el.type === 'range') el.addEventListener('input', handleWaterCycleUpdate);

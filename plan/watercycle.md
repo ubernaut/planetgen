@@ -240,3 +240,11 @@ All passes use the same concurrency rule: **each invocation writes only its own 
 - 2025-12-15: Fixed v2 terrain coupling bugs that made maps look like they “disappeared”: collapse pass now samples columns starting at terrain-aware ground radius (not `planetRadius`), and the volume state now initializes with a humid lower troposphere so clouds can form immediately instead of waiting on slow evaporation spin-up.
 - 2025-12-15: Added a 3D volume atlas debug view option to the Weather debug selector; when selected it overlays the packed atlas in-screen so we can see if the volume produces qc/qr even when the column maps look empty.
 - 2025-12-15: Cranked v2 moisture sources and relaxed sinks: stronger evap (esp. ocean), easier condensation, slower rain-out/evap, lower fall speed, seeded boundary-layer qc/qv, and increased collapse sampling to 28 layers so 2D maps pick up thin clouds; boosted atlas contrast again.
+- 2025-12-15: Added vertical slice thickness control (km) and stronger high-res scaling: evap/condense boosted with resolution, rain-out slowed and fall speed reduced with resolution, atlas contrast scales with `64/N`, and raymarch steps increase with N to keep high-res clouds visible.
+
+## Upcoming (Seasons, Moon, Surface coupling)
+- Axial tilt & seasons: add axial tilt slider and orbital day-of-year to drive sun declination; update sunDir each frame from tilt + orbital position so hemispheres alternate seasons.
+- Physical sun/moon: position sun by orbital angle; add a moon with orbital plane/phase; compute moon phase/illumination for rendering and potential tidal coupling later.
+- Cloud altitude/surface alignment: ensure `altCenter` uses `planetRadius + seaOffset + terrain` in sim and collapse; recompute inner/outer radii per run to match sea level; clamp dt to voxelSize/maxWind to prevent blowout at high N.
+- Precipitation deposition: accumulate snow physically (temp-based) into a snowpack buffer that can flow into glaciers; route rain/snowmelt into soil/rivers/lakes and feed erosion/wetness/greening (wetness → darker albedo/greener biomes, dryness → desert).
+- Render/debug: keep atlas/slice debug; add a slice-index debug uniform for clouds to confirm sampling; add per-frame max qc/qr diagnostics for high N.

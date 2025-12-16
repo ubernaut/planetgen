@@ -138,7 +138,8 @@ export class WaterCycleVolumeSystem {
         evapStrength,
         precipStrength,
         windStrength,
-        oceanInertia
+        oceanInertia,
+        atmoThicknessM
     } = {}) {
         if (Number.isFinite(timeScale)) this.timeScale = Math.max(0, timeScale);
         if (Number.isFinite(readbackIntervalS)) this.readbackIntervalS = Math.max(0.01, readbackIntervalS);
@@ -146,6 +147,7 @@ export class WaterCycleVolumeSystem {
         if (Number.isFinite(precipStrength)) this.precipStrength = Math.max(0, precipStrength);
         if (Number.isFinite(windStrength)) this.windStrength = Math.max(0, windStrength);
         if (Number.isFinite(oceanInertia)) this.oceanInertia = clamp01(oceanInertia);
+        if (Number.isFinite(atmoThicknessM)) this.atmoThicknessM = Math.max(1000, atmoThicknessM);
     }
 
     getVolumeTexture() {
@@ -443,10 +445,10 @@ export class WaterCycleVolumeSystem {
         const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
         const voxelSizeM = (2 * extentM) / Math.max(this.volumeN, 1);
         const maxWindMS = Math.max(5, 60 * this.windStrength);
-        const cflDt = 0.5 * voxelSizeM / maxWindMS; // seconds
-        const maxStepSim = 60; // hard cap (sim seconds) per dispatch step
-        const stepCap = Math.max(2, Math.min(maxStepSim, cflDt));
-        const maxSubsteps = 24;
+        const cflDt = 0.25 * voxelSizeM / maxWindMS; // stricter CFL
+        const maxStepSim = 10; // hard cap (sim seconds) per dispatch step
+        const stepCap = Math.max(0.5, Math.min(maxStepSim, cflDt));
+        const maxSubsteps = 64;
 
         this.readbackTimerS += dtReal;
         const device = this.device;
@@ -540,8 +542,11 @@ export class WaterCycleVolumeSystem {
     _writeUniforms(dtSim, timeSim, sunDirLocal) {
         const u = this.uniformData;
 
-        const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
+        // Define the cube extent around the planet using the planet radius so voxel positions
+        // line up with the surface shell; atmo thickness is applied separately in altitude tests.
+        const extentM = this.planetRadiusM;
         const invVoxel = this.volumeN / Math.max(2 * extentM, 1e-6);
+        const resScale = Math.max(1, this.volumeN / 32);
 
         // [0]: N, N, N, dt
         u[0] = this.volumeN;
@@ -570,16 +575,21 @@ export class WaterCycleVolumeSystem {
         // [4]: solarHeatingK, tempRelax, evapOcean, evapLand
         u[16] = 18;
         u[17] = 1 / 21600;
-        // Stronger evaporation so the system rapidly humidifies.
-        u[18] = 1.8e-4 * this.evapStrength;
-        u[19] = 6e-5 * this.evapStrength;
+        // Stronger evaporation so the system rapidly humidifies (more at higher res).
+        const resScale2 = resScale * resScale;
+        const resScaleExp = Math.pow(resScale, 3.0);
+        u[18] = 4.5e-4 * this.evapStrength * resScaleExp;
+        u[19] = 1.6e-4 * this.evapStrength * resScaleExp;
 
         // [5]: condenseRate, precipRate, rainDecay, cloudEvap
         // Easier cloud formation and very slow rain-out to keep clouds visible.
-        u[20] = 1 / 800;
-        u[21] = (1 / 36000) * this.precipStrength;
-        u[22] = 1 / 43200;
-        u[23] = 1 / 43200;
+        u[20] = (1 / 200) * resScaleExp;
+        // Autoconversion slows down aggressively with resolution so small voxels keep cloud water.
+        const prBase = 1.0 / 240000.0;
+        const prScale = Math.pow(resScale, 3.0);
+        u[21] = prBase * this.precipStrength / prScale;
+        u[22] = 1 / 259200; // slower rain decay
+        u[23] = 1 / 259200; // slower cloud evaporation
 
         // [6]: windRelax, windDrag, coriolisMin, maxWind
         u[24] = (1 / 7200) * this.windStrength;
@@ -592,7 +602,7 @@ export class WaterCycleVolumeSystem {
         u[29] = 45000;
         u[30] = 1 / 7200;
         // Reduce fall speed so precipitation doesn't clear the column too quickly.
-        u[31] = 2.0;
+        u[31] = 0.05 / resScaleExp;
 
         // [8]: surfaceW, surfaceH, weatherW, weatherH
         u[32] = this.surfaceW;
@@ -885,11 +895,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   qv += nearSurface * ocean * evapOcean() * insFloor * deficit * dt();
   qv += nearSurface * (1.0 - ocean) * evapLand() * insFloor * soil * (1.0 - 0.85 * snowCover) * dt();
   // Keep a minimum humidity reservoir near the surface so it can't dry out completely.
-  let qMin = qs * 0.2;
+  let qMin = qs * 0.35;
   qv = max(qv, nearSurface * qMin + (1.0 - nearSurface) * qv);
   // Seed a tiny cloud amount near the surface to kickstart visuals/stability.
-  let seedQc = nearSurface * insFloor * (0.0005 + 0.00055 * ocean);
-  let take = min(seedQc, qv * 0.6);
+  let seedQc = nearSurface * insFloor * (0.0015 + 0.0015 * ocean);
+  let take = min(seedQc, qv * 0.7);
   qv -= take;
   qc += take;
 
@@ -961,7 +971,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Pack volume atlas (cloud, rain, pressure, RH).
   // Boost visual contrast so low but non‑zero cloud water shows up.
-  let cloud01 = clamp(qc * 8000.0, 0.0, 1.0);
+  let scaleN = max(1.0, 64.0 / f32(N())); // higher res → scale up visibility
+  let cloud01 = clamp(qc * 8000.0 * scaleN, 0.0, 1.0);
   let rain01 = clamp(qr * 800.0, 0.0, 1.0);
   let p01 = clamp(0.5 + p * (1.0 / 6000.0), 0.0, 1.0);
   let rh01 = clamp(select(0.0, qv / max(qs, 1e-6), qs > 0.0), 0.0, 1.0);

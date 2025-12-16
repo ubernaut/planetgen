@@ -585,6 +585,27 @@
           </div>
         </div>
         <div class="field">
+          <label for="weatherAtmoThickness">Vertical slice thickness (km)</label>
+          <div class="range-row">
+            <input id="weatherAtmoThickness" type="range" min="5" max="60" step="1" value="20">
+            <span class="value" id="weatherAtmoThicknessValue">20</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="axialTilt">Axial tilt (deg)</label>
+          <div class="range-row">
+            <input id="axialTilt" type="range" min="0" max="45" step="0.1" value="23.4">
+            <span class="value" id="axialTiltValue">23.4</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="seasonProgress">Season (orbit phase)</label>
+          <div class="range-row">
+            <input id="seasonProgress" type="range" min="0" max="1" step="0.01" value="0">
+            <span class="value" id="seasonProgressValue">0.00</span>
+          </div>
+        </div>
+        <div class="field">
           <label for="weatherDebug">Weather debug view</label>
           <select id="weatherDebug">
             <option value="off" selected>Off</option>

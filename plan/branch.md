@@ -3,6 +3,7 @@ llm instructions for this file: this file contains the short term goals for this
 immediate goals: 
 
 - Fix TinyPlanet first-person (spawn height/orientation, pointer-lock/mouselook, mobile input). Current state: broken after refactor; attempts failed (still spawning underground/inward-facing).
+- Weather/space: tune 3D voxel clouds at high resolution, add axial tilt + physical sun/moon for seasons and moon phases; wire precip → surface moisture/biomes/erosion/glaciers.
 
 recent progress:
 
