@@ -63,7 +63,7 @@ export class TinyPlanetControls {
     }
 
     // Enter FPS mode at specific world position
-    enter(startPointWorld, planetMesh) {
+    enter(startPointWorld, planetMesh, cameraForForward = null) {
         if (this.enabled) return;
         this.enabled = true;
         this.planetMesh = planetMesh;
@@ -73,6 +73,9 @@ export class TinyPlanetControls {
         const localPoint = startPointWorld.clone();
         this.planetMesh.worldToLocal(localPoint);
         const startDir = localPoint.normalize();
+        const camForward = cameraForForward ? cameraForForward.getWorldDirection(new THREE.Vector3()) : new THREE.Vector3(0, 0, -1);
+        const forwardProjected = camForward.clone().projectOnPlane(startDir).normalize();
+        const basisForward = forwardProjected.lengthSq() > 1e-6 ? forwardProjected : this.basisEast(startDir);
 
         // Attach player to Planet (Local Space)
         this.planetMesh.add(this.player);
@@ -81,12 +84,7 @@ export class TinyPlanetControls {
         // We start slightly above surface based on startDir
         const spawnHeight = localPoint.length() + 2.0; 
         this.player.position.copy(startDir).multiplyScalar(spawnHeight);
-        
-        // Align up
-        const quaternion = new THREE.Quaternion();
-        quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), startDir);
-        this.player.quaternion.copy(quaternion);
-        this.player.up.copy(startDir);
+        this.alignToFrame(startDir, basisForward);
         
         // Attach camera
         this.player.add(this.camera);
@@ -229,6 +227,24 @@ export class TinyPlanetControls {
         }
     }
 
+    basisEast(up) {
+        const axis = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const e = new THREE.Vector3().crossVectors(axis, up).normalize();
+        return e.lengthSq() > 1e-6 ? e : new THREE.Vector3(1, 0, 0);
+    }
+
+    alignToFrame(up, forward) {
+        const safeUp = up.clone().normalize();
+        let fwd = forward.clone().projectOnPlane(safeUp);
+        if (fwd.lengthSq() < 1e-6) fwd = this.basisEast(safeUp);
+        fwd.normalize();
+        const right = new THREE.Vector3().crossVectors(fwd, safeUp).normalize();
+        fwd.crossVectors(safeUp, right).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, safeUp, fwd.negate());
+        this.player.quaternion.setFromRotationMatrix(m);
+        this.player.up.copy(safeUp);
+    }
+
     toggleFlight() {
         this.isFlying = !this.isFlying;
         this.verticalVelocity = 0;
@@ -348,18 +364,14 @@ export class TinyPlanetControls {
             }
         }
 
-        // Friction
-        this.velocity.x -= this.velocity.x * 10.0 * delta;
-        this.velocity.z -= this.velocity.z * 10.0 * delta;
-
         let speed = this.walkSpeed;
         if (this.isFlying) speed = this.flySpeed;
         else if (this.isSwimming) speed = this.swimSpeed;
         else if (this.isRunning) speed = this.runSpeed;
 
         const moveVec = new THREE.Vector3();
-        if (this.moveForward) moveVec.z -= 1;
-        if (this.moveBackward) moveVec.z += 1;
+        if (this.moveForward) moveVec.z += 1;
+        if (this.moveBackward) moveVec.z -= 1;
         if (this.moveLeft) moveVec.x -= 1;
         if (this.moveRight) moveVec.x += 1;
         moveVec.normalize();
@@ -383,9 +395,6 @@ export class TinyPlanetControls {
                 this.player.position.add(walk);
             }
 
-            this.verticalVelocity -= this.gravity * delta;
-            this.player.translateY(this.verticalVelocity * delta);
-
             let targetHeight = this.planetRadius;
             const forge = this.planetMesh.userData.forge;
             const settings = this.planetMesh.userData.settings;
@@ -396,22 +405,28 @@ export class TinyPlanetControls {
             }
 
             const currentHeight = this.player.position.length();
-            const isOnGround = currentHeight <= targetHeight + 0.05;
-            if (isOnGround) {
-                this.verticalVelocity = Math.max(0, this.verticalVelocity);
+            const floorHeight = targetHeight + this.playerHeight;
+            const isOnGround = currentHeight <= floorHeight + 0.02;
+
+            if (!isOnGround) {
+                this.verticalVelocity -= this.gravity * delta;
+                this.player.translateY(this.verticalVelocity * delta);
+            } else {
+                this.verticalVelocity = 0;
                 this.canJump = true;
             }
 
-            if (this.player.position.length() < targetHeight) {
+            if (this.player.position.length() < floorHeight) {
                 const dir = this.player.position.clone().normalize();
-                this.player.position.copy(dir.multiplyScalar(targetHeight + this.playerHeight));
+                this.player.position.copy(dir.multiplyScalar(floorHeight));
                 this.verticalVelocity = 0;
                 this.canJump = true;
             }
 
             const upNow = this.player.position.clone().normalize();
-            const realign = new THREE.Quaternion().setFromUnitVectors(this.player.up, upNow);
-            this.player.quaternion.premultiply(realign);
+            const currentUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.player.quaternion);
+            const toUp = new THREE.Quaternion().setFromUnitVectors(currentUp, upNow);
+            this.player.quaternion.premultiply(toUp);
             this.player.up.copy(upNow);
             this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
         }

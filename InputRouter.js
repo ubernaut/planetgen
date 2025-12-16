@@ -35,7 +35,16 @@ export class InputRouter {
     }
 
     onKeyDown(event) {
-        const { code, repeat } = event;
+        const { code, repeat, target } = event;
+        // Avoid eating keystrokes while typing in text fields.
+        const isTextField = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+        // Prevent the browser from scrolling the page when using arrows / space / etc.
+        const needsPrevent = !isTextField && [
+            'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+            'Space','KeyW','KeyA','KeyS','KeyD',
+            'ShiftLeft','ShiftRight','ControlLeft','ControlRight','Enter','KeyF'
+        ].includes(code);
+        if (needsPrevent) event.preventDefault();
         switch (code) {
             case 'KeyW':
             case 'ArrowUp':
@@ -89,7 +98,16 @@ export class InputRouter {
     }
 
     onKeyUp(event) {
-        switch (event.code) {
+        const { code, target } = event;
+        const isTextField = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+        if (!isTextField && [
+            'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+            'Space','KeyW','KeyA','KeyS','KeyD',
+            'ShiftLeft','ShiftRight','ControlLeft','ControlRight','Enter'
+        ].includes(code)) {
+            event.preventDefault();
+        }
+        switch (code) {
             case 'KeyW':
             case 'ArrowUp':
                 this.state.forward = false;

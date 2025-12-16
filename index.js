@@ -453,7 +453,7 @@ window.addEventListener('mousedown', (event) => {
             const intersects = raycaster.intersectObject(planet, false);
             if (intersects.length > 0) {
                 const point = intersects[0].point;
-                tinyControls.enter(point, planet);
+                tinyControls.enter(point, planet, camera);
                 controls.enabled = false;
                 setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
             }
@@ -470,15 +470,15 @@ function handleSurfaceAction() {
     input.setLookMode('surface');
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const hit = raycaster.intersectObject(planet, false);
-    if (hit.length) {
-        savedOrbitState = {
-            position: camera.position.clone(),
-            target: controls.target.clone()
-        };
-        tinyControls.enter(hit[0].point, planet);
-        controls.enabled = false;
-        setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
-    }
+    if (!hit.length) return;
+    savedOrbitState = {
+        position: camera.position.clone(),
+        target: controls.target.clone()
+    };
+    // Use the same entry path as middle-click so orientation matches.
+    tinyControls.enter(hit[0].point, planet, camera);
+    controls.enabled = false;
+    setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
 }
 
 const presets = {
@@ -892,19 +892,18 @@ function applyPlanetScale() {
 function syncMobileVisibility() {
     if (!mobileControlsEl) return;
     const mobile = isMobileDevice();
+    const inTiny = tinyControls.enabled;
     if (!mobile) {
         mobileControlsEl.style.display = 'none';
-        input?.clear();
-        if (reticleEl) reticleEl.style.display = 'none';
-        return;
+    } else {
+        mobileControlsEl.style.display = 'block';
+        if (movePadEl) movePadEl.style.display = inTiny ? 'grid' : 'none';
+        if (lookPadEl) lookPadEl.style.display = inTiny ? 'grid' : 'none';
+        const actionColumn = mobileControlsEl.querySelector('.action-column');
+        if (actionColumn) actionColumn.style.display = inTiny ? 'grid' : 'none';
+        if (surfaceOnlyBtn) surfaceOnlyBtn.style.display = inTiny ? 'none' : 'inline-flex';
     }
-    const inTiny = tinyControls.enabled;
-    mobileControlsEl.style.display = 'block';
-    if (movePadEl) movePadEl.style.display = inTiny ? 'grid' : 'none';
-    if (lookPadEl) lookPadEl.style.display = inTiny ? 'grid' : 'none';
-    const actionColumn = mobileControlsEl.querySelector('.action-column');
-    if (actionColumn) actionColumn.style.display = inTiny ? 'grid' : 'none';
-    if (surfaceOnlyBtn) surfaceOnlyBtn.style.display = inTiny ? 'none' : 'inline-flex';
+    // Always show a consistent on-screen reticle (desktop + mobile).
     if (reticleEl) reticleEl.style.display = 'block';
 }
 
