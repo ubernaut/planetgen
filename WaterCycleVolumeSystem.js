@@ -3,7 +3,7 @@ import { buildSurfaceFields, clamp01 } from './WaterCycleUtils.js';
 
 const DEFAULT_SURFACE_W = 256;
 const DEFAULT_SURFACE_H = 128;
-const DEFAULT_VOLUME_N = 64; // NxNxN voxels
+const DEFAULT_VOLUME_N = 32; // NxNxN voxels
 
 function makeDataTexture(data, width, height, {
     wrapS = THREE.ClampToEdgeWrapping,

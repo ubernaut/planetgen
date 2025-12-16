@@ -13,13 +13,19 @@ export class TinyPlanetControls {
 
         // Configuration
         this.planetRadius = 10; // Base radius from worldgen
-        this.walkSpeed = 5;
-        this.runSpeed = 10;
-        this.flySpeed = 10;
-        this.swimSpeed = 3;
+        this.walkSpeed = 3.5;
+        this.runSpeed = 6.5;
+        this.flySpeed = 8.0;
+        this.swimSpeed = 2.5;
         this.jumpForce = 2.0;
         this.gravity = 30.0;
         this.playerHeight = 0.04;
+        this.accelGround = 32;
+        this.accelAir = 10;
+        this.accelFly = 14;
+        this.accelSwim = 10;
+        this.frictionGround = 9;
+        this.stopSpeed = 1.2;
 
         // State
         this.enabled = false;
@@ -40,6 +46,7 @@ export class TinyPlanetControls {
         this.velocity = new THREE.Vector3();
         this.direction = new THREE.Vector3();
         this.verticalVelocity = 0;
+        this.horizontalVelocity = new THREE.Vector3();
 
         // The player rig
         this.player = new THREE.Object3D();
@@ -95,6 +102,7 @@ export class TinyPlanetControls {
         this.velocity.set(0, 0, 0);
         this.verticalVelocity = 0;
         this.isFlying = false;
+        this.horizontalVelocity.set(0, 0, 0);
 
         if (this.externalInput && this.externalInput.setLookMode) {
             this.externalInput.setLookMode('surface');
@@ -133,22 +141,26 @@ export class TinyPlanetControls {
             this.externalInput.clear();
             if (this.externalInput.setLookMode) this.externalInput.setLookMode('orbit');
         }
+
+        // Reset local input flags so stale state doesn't persist between sessions.
+        this.moveForward = this.moveBackward = this.moveLeft = this.moveRight = false;
+        this.moveUp = this.moveDown = false;
+        this.rollLeft = this.rollRight = false;
+        this.isRunning = false;
+        this.canJump = false;
+        this.horizontalVelocity.set(0, 0, 0);
     }
 
     addListeners() {
-        if (!this.externalInput) {
-            document.addEventListener('keydown', this.onKeyDown);
-            document.addEventListener('keyup', this.onKeyUp);
-        }
+        document.addEventListener('keydown', this.onKeyDown);
+        document.addEventListener('keyup', this.onKeyUp);
         document.addEventListener('mousemove', this.onMouseMove);
         document.addEventListener('pointerlockchange', this.onPointerLockChange);
     }
 
     removeListeners() {
-        if (!this.externalInput) {
-            document.removeEventListener('keydown', this.onKeyDown);
-            document.removeEventListener('keyup', this.onKeyUp);
-        }
+        document.removeEventListener('keydown', this.onKeyDown);
+        document.removeEventListener('keyup', this.onKeyUp);
         document.removeEventListener('mousemove', this.onMouseMove);
         document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     }
@@ -287,18 +299,20 @@ export class TinyPlanetControls {
 
     update(delta) {
         if (!this.enabled) return;
+        const dt = Math.min(Math.max(delta ?? 0, 0), 0.05);
+
+        const externalState = this.externalInput?.getState?.();
+        const moveForward = this.moveForward || !!externalState?.forward;
+        const moveBackward = this.moveBackward || !!externalState?.backward;
+        const moveLeft = this.moveLeft || !!externalState?.left;
+        const moveRight = this.moveRight || !!externalState?.right;
+        const moveUp = this.moveUp || !!externalState?.up;
+        const moveDown = this.moveDown || !!externalState?.down;
+        const runActive = this.isRunning || !!externalState?.run;
+        const rollLeft = this.rollLeft || !!externalState?.rollLeft;
+        const rollRight = this.rollRight || !!externalState?.rollRight;
 
         if (this.externalInput) {
-            const a = this.externalInput.getState();
-            this.moveForward = !!a.forward;
-            this.moveBackward = !!a.backward;
-            this.moveLeft = !!a.left;
-            this.moveRight = !!a.right;
-            this.moveUp = !!a.up;
-            this.moveDown = !!a.down;
-            this.isRunning = !!a.run;
-            this.rollLeft = !!a.rollLeft;
-            this.rollRight = !!a.rollRight;
             if (this.externalInput.consume('flyToggle')) {
                 this.toggleFlight();
             }
@@ -367,16 +381,18 @@ export class TinyPlanetControls {
         let speed = this.walkSpeed;
         if (this.isFlying) speed = this.flySpeed;
         else if (this.isSwimming) speed = this.swimSpeed;
-        else if (this.isRunning) speed = this.runSpeed;
+        else if (runActive) speed = this.runSpeed;
 
         const moveVec = new THREE.Vector3();
-        if (this.moveForward) moveVec.z += 1;
-        if (this.moveBackward) moveVec.z -= 1;
-        if (this.moveLeft) moveVec.x -= 1;
-        if (this.moveRight) moveVec.x += 1;
+        if (moveForward) moveVec.z += 1;
+        if (moveBackward) moveVec.z -= 1;
+        if (moveLeft) moveVec.x -= 1;
+        if (moveRight) moveVec.x += 1;
+        if (this.isFlying) moveVec.z *= -1; // Keep forward/backward consistent with ground controls
         moveVec.normalize();
 
         if (this.isFlying || this.isSwimming) {
+            this.horizontalVelocity.multiplyScalar(0.5);
             const mv = moveVec.clone().multiplyScalar(speed * delta);
             mv.applyQuaternion(this.camera.quaternion);
             mv.applyQuaternion(this.player.quaternion); 
@@ -385,15 +401,16 @@ export class TinyPlanetControls {
             if (roll !== 0) this.camera.rotateZ(roll * 2.0 * delta);
         } else {
             const up = this.player.position.clone().normalize();
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).projectOnPlane(up).normalize();
+            const forward = new THREE.Vector3(0, 0, -1)
+                .applyQuaternion(this.camera.quaternion)
+                .applyQuaternion(this.player.quaternion)
+                .projectOnPlane(up)
+                .normalize();
             const right = new THREE.Vector3().crossVectors(forward, up).normalize();
             const walk = new THREE.Vector3();
             walk.addScaledVector(forward, moveVec.z);
             walk.addScaledVector(right, moveVec.x);
-            if (walk.lengthSq() > 1e-6) {
-                walk.normalize().multiplyScalar(speed * delta);
-                this.player.position.add(walk);
-            }
+            const wishDir = walk.lengthSq() > 1e-6 ? walk.normalize() : walk;
 
             let targetHeight = this.planetRadius;
             const forge = this.planetMesh.userData.forge;
@@ -403,14 +420,48 @@ export class TinyPlanetControls {
                 const rawHeight = forge.getHeightAt(dir);
                 targetHeight = settings.radius + (rawHeight - settings.seaLevel) * settings.heightScale;
             }
-
             const currentHeight = this.player.position.length();
             const floorHeight = targetHeight + this.playerHeight;
             const isOnGround = currentHeight <= floorHeight + 0.02;
 
+            const applyFriction = () => {
+                const v = this.horizontalVelocity;
+                const spd = v.length();
+                if (spd < 1e-5) return;
+                const control = Math.max(this.stopSpeed, spd);
+                const drop = control * this.frictionGround * dt;
+                const newSpd = Math.max(spd - drop, 0);
+                v.multiplyScalar(newSpd / spd);
+            };
+
+            const accelerate = (dir, wishSpeed, accel) => {
+                if (wishSpeed <= 0 || dir.lengthSq() < 1e-6) return;
+                const curSpeed = this.horizontalVelocity.dot(dir);
+                const addSpeed = wishSpeed - curSpeed;
+                if (addSpeed <= 0) return;
+                const accelSpeed = accel * wishSpeed * dt;
+                const amt = Math.min(accelSpeed, addSpeed);
+                this.horizontalVelocity.addScaledVector(dir, amt);
+            };
+
+            // Grounded state and friction/acceleration.
+            if (isOnGround) {
+                if (wishDir.lengthSq() < 1e-6) {
+                    applyFriction();
+                } else {
+                    applyFriction();
+                    accelerate(wishDir, speed, this.accelGround);
+                }
+            } else if (wishDir.lengthSq() > 1e-6) {
+                accelerate(wishDir, speed, this.accelAir);
+            }
+
+            const moveStep = this.horizontalVelocity.clone().multiplyScalar(dt);
+            this.player.position.add(moveStep);
+
             if (!isOnGround) {
-                this.verticalVelocity -= this.gravity * delta;
-                this.player.translateY(this.verticalVelocity * delta);
+                this.verticalVelocity -= this.gravity * dt;
+                this.player.translateY(this.verticalVelocity * dt);
             } else {
                 this.verticalVelocity = 0;
                 this.canJump = true;

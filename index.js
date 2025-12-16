@@ -493,7 +493,7 @@ const presets = {
         heightScale: 18.2,
         seaLevel: 0.53,
         smoothPasses: 20,
-        subdivisions: 128,
+        subdivisions: 16,
         iceCap: 0.15,
         plateDelta: 1.25,
         plateSizeVariance: 0.35,
@@ -515,7 +515,7 @@ const presets = {
         heightScale: 18.2,
         seaLevel: 0.53,
         smoothPasses: 20,
-        subdivisions: 128,
+        subdivisions: 16,
         iceCap: 0.12,
         plateDelta: 1.25,
         plateSizeVariance: 0.35,
@@ -2241,23 +2241,6 @@ function onResize() {
     syncMobileVisibility();
 }
 
-function applyOrbitLookDelta(look) {
-    const { x, y } = look;
-    if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) return;
-    const target = controls.target;
-    const offset = camera.position.clone().sub(target);
-    const yaw = -x * 0.01;
-    const pitch = -y * 0.01;
-    const up = new THREE.Vector3(0, 1, 0);
-    const quatYaw = new THREE.Quaternion().setFromAxisAngle(up, yaw);
-    offset.applyQuaternion(quatYaw);
-    const right = new THREE.Vector3().crossVectors(up, offset).normalize();
-    const quatPitch = new THREE.Quaternion().setFromAxisAngle(right, pitch);
-    offset.applyQuaternion(quatPitch);
-    camera.position.copy(target).add(offset);
-    camera.lookAt(target);
-}
-
 function updateWeatherFrame() {
     const invScale = planetGroup.scale.x ? (1 / planetGroup.scale.x) : 1;
 
@@ -2327,8 +2310,6 @@ function animate() {
             planet.rotation.y += 0.0009;
         }
         controls.update();
-        // Apply orbit look from keyboard arrows via InputRouter.
-        applyOrbitLookDelta(input.consumeLookDelta());
     }
     syncMobileVisibility();
 
@@ -2646,7 +2627,7 @@ function getWeatherSimMode() {
 
 function getWeatherVolumeResolutionN() {
     const v = parseFloat(weatherVolumeResEl?.value);
-    const n = Number.isFinite(v) ? v : 64;
+    const n = Number.isFinite(v) ? v : 32;
     return clamp(Math.round(n), 32, 128);
 }
 
@@ -2721,8 +2702,8 @@ async function selectWaterCycleSystemIfNeeded() {
 
 function applyWaterCycleConfig() {
     const mode = getWeatherSimMode();
-    const minutesPerSec = clamp(parseFloat(weatherSpeedEl?.value) || 20, 0, 60);
-    const updateHz = clamp(parseFloat(weatherUpdateHzEl?.value) || 7, 1, 20);
+    const minutesPerSec = clamp(parseFloat(weatherSpeedEl?.value) || 1, 0, 60);
+    const updateHz = clamp(parseFloat(weatherUpdateHzEl?.value) || 1, 1, 20);
     const moistureLayers = clamp(parseFloat(weatherMoistureLayersEl?.value) || 2, 1, 4);
     const evapStrength = clamp(parseFloat(weatherEvapEl?.value) || 1, 0, 3);
     const precipStrength = clamp(parseFloat(weatherPrecipEl?.value) || 1, 0, 3);

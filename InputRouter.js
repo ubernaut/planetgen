@@ -20,10 +20,6 @@ export class InputRouter {
         this.lookDelta = { x: 0, y: 0 };
         this.mode = 'desktop';
         this.lookMode = 'orbit'; // 'orbit' or 'surface'
-        this.onKeyDown = this.onKeyDown.bind(this);
-        this.onKeyUp = this.onKeyUp.bind(this);
-        this.target.addEventListener('keydown', this.onKeyDown);
-        this.target.addEventListener('keyup', this.onKeyUp);
     }
 
     setMode(mode) {
@@ -32,116 +28,6 @@ export class InputRouter {
 
     setLookMode(mode) {
         this.lookMode = mode;
-    }
-
-    onKeyDown(event) {
-        const { code, repeat, target } = event;
-        // Avoid eating keystrokes while typing in text fields.
-        const isTextField = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-        // Prevent the browser from scrolling the page when using arrows / space / etc.
-        const needsPrevent = !isTextField && [
-            'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
-            'Space','KeyW','KeyA','KeyS','KeyD',
-            'ShiftLeft','ShiftRight','ControlLeft','ControlRight','Enter','KeyF'
-        ].includes(code);
-        if (needsPrevent) event.preventDefault();
-        switch (code) {
-            case 'KeyW':
-            case 'ArrowUp':
-                // Arrow keys always control look.
-                if (code === 'ArrowUp') { this.addLookDelta(0, -5); break; }
-                this.state.forward = true;
-                break;
-            case 'KeyS':
-            case 'ArrowDown':
-                if (code === 'ArrowDown') { this.addLookDelta(0, 5); break; }
-                this.state.backward = true;
-                break;
-            case 'KeyA':
-            case 'ArrowLeft':
-                if (code === 'ArrowLeft') { this.addLookDelta(-5, 0); break; }
-                this.state.left = true;
-                break;
-            case 'KeyD':
-            case 'ArrowRight':
-                if (code === 'ArrowRight') { this.addLookDelta(5, 0); break; }
-                this.state.right = true;
-                break;
-            case 'Space':
-                this.state.up = true;
-                if (!repeat) this.once.add('jump');
-                break;
-            case 'ControlLeft':
-            case 'ControlRight':
-                this.state.down = true;
-                break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                this.state.run = true;
-                break;
-            case 'KeyQ':
-                this.state.rollLeft = true;
-                break;
-            case 'KeyE':
-                this.state.rollRight = true;
-                break;
-            case 'KeyF':
-                if (!repeat) this.once.add('flyToggle');
-                break;
-            case 'Enter':
-                if (!repeat) this.once.add('surface');
-                break;
-            case 'Escape':
-                if (!repeat) this.once.add('exit');
-                break;
-        }
-    }
-
-    onKeyUp(event) {
-        const { code, target } = event;
-        const isTextField = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-        if (!isTextField && [
-            'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
-            'Space','KeyW','KeyA','KeyS','KeyD',
-            'ShiftLeft','ShiftRight','ControlLeft','ControlRight','Enter'
-        ].includes(code)) {
-            event.preventDefault();
-        }
-        switch (code) {
-            case 'KeyW':
-            case 'ArrowUp':
-                this.state.forward = false;
-                break;
-            case 'KeyS':
-            case 'ArrowDown':
-                this.state.backward = false;
-                break;
-            case 'KeyA':
-            case 'ArrowLeft':
-                this.state.left = false;
-                break;
-            case 'KeyD':
-            case 'ArrowRight':
-                this.state.right = false;
-                break;
-            case 'Space':
-                this.state.up = false;
-                break;
-            case 'ControlLeft':
-            case 'ControlRight':
-                this.state.down = false;
-                break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                this.state.run = false;
-                break;
-            case 'KeyQ':
-                this.state.rollLeft = false;
-                break;
-            case 'KeyE':
-                this.state.rollRight = false;
-                break;
-        }
     }
 
     consume(name) {
@@ -188,7 +74,5 @@ export class InputRouter {
     }
 
     dispose() {
-        this.target.removeEventListener('keydown', this.onKeyDown);
-        this.target.removeEventListener('keyup', this.onKeyUp);
     }
 }
