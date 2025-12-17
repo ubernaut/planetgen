@@ -73,6 +73,7 @@ const waterCycleToggleEl = document.getElementById('waterCycleToggle');
 const waterCycleCloudToggleEl = document.getElementById('waterCycleCloudToggle');
 const waterCycleRunEl = document.getElementById('waterCycleRun');
 const waterCycleStepBtn = document.getElementById('waterCycleStep');
+const weatherAutoScaleEl = document.getElementById('weatherAutoScale');
 const weatherSimModeEl = document.getElementById('weatherSimMode');
 const weatherVolumeResEl = document.getElementById('weatherVolumeRes');
 const weatherVolumeResValueEl = document.getElementById('weatherVolumeResValue');
@@ -456,6 +457,36 @@ let volumeRayStepsMax = 48;
 let volumeRayBundle = 1;
 let fpsDiv = null;
 let fpsSMA = 60;
+const WEATHER_AUTO_TIERS_3D = [
+    { n: 16, updateHz: 4, rayMin: 10, rayMax: 20, bundle: 4 },
+    { n: 24, updateHz: 5, rayMin: 14, rayMax: 26, bundle: 3 },
+    { n: 32, updateHz: 6, rayMin: 18, rayMax: 32, bundle: 2 },
+    { n: 48, updateHz: 7, rayMin: 22, rayMax: 38, bundle: 2 },
+    { n: 64, updateHz: 8, rayMin: 28, rayMax: 48, bundle: 1 }
+];
+const WEATHER_AUTO_TIERS_2D = [
+    { updateHz: 4, moistureLayers: 1 },
+    { updateHz: 6, moistureLayers: 2 },
+    { updateHz: 8, moistureLayers: 3 },
+    { updateHz: 10, moistureLayers: 4 }
+];
+const WEATHER_AUTO_LIMITS = {
+    lowMs: 20,
+    highMs: 33,
+    downDelayS: 1.5,
+    upDelayS: 6.0,
+    cooldownDownS: 2.0,
+    cooldownUpS: 4.0
+};
+const weatherAutoState = {
+    manual: null,
+    tier3d: 0,
+    tier2d: 0,
+    emaMs: 16.7,
+    overBudgetS: 0,
+    underBudgetS: 0,
+    cooldownS: 0
+};
 
 const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
 
@@ -1242,6 +1273,7 @@ function animate() {
     if (fpsDiv) fpsDiv.textContent = `fps: ${fpsSMA.toFixed(1)}`;
     
     updateRangeLabels();
+    updateWeatherAutoScale(delta);
     
     if (xrSession) {
         pollVRInputs();
@@ -1457,6 +1489,7 @@ const waterCycleUiControls = [
     waterCycleCloudToggleEl,
     waterCycleRunEl,
     waterCycleStepBtn,
+    weatherAutoScaleEl,
     weatherSimModeEl,
     weatherVolumeResEl,
     weatherRayStepsMinEl,
@@ -1478,6 +1511,118 @@ const waterCycleUiControls = [
 
 function setWaterCycleUiDisabled(disabled) {
     for (const el of waterCycleUiControls) el.disabled = disabled;
+}
+
+const weatherAutoManagedControls = [
+    weatherUpdateHzEl,
+    weatherVolumeResEl,
+    weatherRayStepsMinEl,
+    weatherRayStepsMaxEl,
+    weatherRayBundleEl,
+    weatherMoistureLayersEl
+].filter(Boolean);
+
+function setWeatherAutoUiDisabled(disabled) {
+    for (const el of weatherAutoManagedControls) el.disabled = disabled;
+}
+
+function snapshotWeatherManualSettings() {
+    return {
+        updateHz: weatherUpdateHzEl?.value,
+        volumeRes: weatherVolumeResEl?.value,
+        rayMin: weatherRayStepsMinEl?.value,
+        rayMax: weatherRayStepsMaxEl?.value,
+        rayBundle: weatherRayBundleEl?.value,
+        moistureLayers: weatherMoistureLayersEl?.value
+    };
+}
+
+function restoreWeatherManualSettings(snapshot) {
+    if (!snapshot) return;
+    if (weatherUpdateHzEl && snapshot.updateHz != null) weatherUpdateHzEl.value = snapshot.updateHz;
+    if (weatherVolumeResEl && snapshot.volumeRes != null) weatherVolumeResEl.value = snapshot.volumeRes;
+    if (weatherRayStepsMinEl && snapshot.rayMin != null) weatherRayStepsMinEl.value = snapshot.rayMin;
+    if (weatherRayStepsMaxEl && snapshot.rayMax != null) weatherRayStepsMaxEl.value = snapshot.rayMax;
+    if (weatherRayBundleEl && snapshot.rayBundle != null) weatherRayBundleEl.value = snapshot.rayBundle;
+    if (weatherMoistureLayersEl && snapshot.moistureLayers != null) weatherMoistureLayersEl.value = snapshot.moistureLayers;
+    handleWaterCycleUpdate();
+}
+
+function getWeatherAutoTierIndex(mode) {
+    if (mode === '3d') {
+        const n = clamp(parseFloat(weatherVolumeResEl?.value) || 8, 1, 128);
+        const hz = clamp(parseFloat(weatherUpdateHzEl?.value) || 1, 1, 20);
+        const rayMin = clamp(parseFloat(weatherRayStepsMinEl?.value) || 28, 1, 128);
+        const rayMax = clamp(parseFloat(weatherRayStepsMaxEl?.value) || 48, 1, 128);
+        const bundle = clamp(parseFloat(weatherRayBundleEl?.value) || 1, 1, 100);
+        let best = 0;
+        let bestScore = Infinity;
+        WEATHER_AUTO_TIERS_3D.forEach((tier, idx) => {
+            const score = Math.abs(tier.n - n)
+                + Math.abs(tier.updateHz - hz) * 2
+                + Math.abs(tier.rayMin - rayMin) * 0.5
+                + Math.abs(tier.rayMax - rayMax) * 0.5
+                + Math.abs(tier.bundle - bundle) * 2;
+            if (score < bestScore) {
+                bestScore = score;
+                best = idx;
+            }
+        });
+        return best;
+    }
+    const hz = clamp(parseFloat(weatherUpdateHzEl?.value) || 1, 1, 20);
+    const layers = clamp(parseFloat(weatherMoistureLayersEl?.value) || 2, 1, 4);
+    let best = 0;
+    let bestScore = Infinity;
+    WEATHER_AUTO_TIERS_2D.forEach((tier, idx) => {
+        const score = Math.abs(tier.updateHz - hz) * 2 + Math.abs(tier.moistureLayers - layers);
+        if (score < bestScore) {
+            bestScore = score;
+            best = idx;
+        }
+    });
+    return best;
+}
+
+function applyWeatherAutoTier(mode) {
+    if (mode === '3d') {
+        const tier = WEATHER_AUTO_TIERS_3D[weatherAutoState.tier3d];
+        if (!tier) return;
+        if (weatherVolumeResEl) weatherVolumeResEl.value = String(tier.n);
+        if (weatherUpdateHzEl) weatherUpdateHzEl.value = String(tier.updateHz);
+        if (weatherRayStepsMinEl) weatherRayStepsMinEl.value = String(tier.rayMin);
+        if (weatherRayStepsMaxEl) weatherRayStepsMaxEl.value = String(tier.rayMax);
+        if (weatherRayBundleEl) weatherRayBundleEl.value = String(tier.bundle);
+    } else {
+        const tier = WEATHER_AUTO_TIERS_2D[weatherAutoState.tier2d];
+        if (!tier) return;
+        if (weatherUpdateHzEl) weatherUpdateHzEl.value = String(tier.updateHz);
+        if (weatherMoistureLayersEl) weatherMoistureLayersEl.value = String(tier.moistureLayers);
+    }
+    handleWaterCycleUpdate();
+}
+
+function enableWeatherAutoScale() {
+    weatherAutoState.manual = snapshotWeatherManualSettings();
+    weatherAutoState.emaMs = 16.7;
+    weatherAutoState.overBudgetS = 0;
+    weatherAutoState.underBudgetS = 0;
+    weatherAutoState.cooldownS = 0;
+
+    const mode = getWeatherSimMode();
+    if (mode === '3d') {
+        weatherAutoState.tier3d = getWeatherAutoTierIndex(mode);
+    } else {
+        weatherAutoState.tier2d = getWeatherAutoTierIndex(mode);
+    }
+    setWeatherAutoUiDisabled(true);
+    applyWeatherAutoTier(mode);
+}
+
+function disableWeatherAutoScale() {
+    setWeatherAutoUiDisabled(false);
+    restoreWeatherManualSettings(weatherAutoState.manual);
+    weatherAutoState.manual = null;
 }
 
 function getWeatherSimMode() {
@@ -1651,12 +1796,71 @@ function applyWaterCycleConfig() {
         });
     }
 }
+
+function updateWeatherAutoScale(deltaSeconds) {
+    if (!weatherAutoScaleEl?.checked) return;
+    if (!(waterCycleToggleEl?.checked ?? false)) return;
+    const dt = Math.min(Math.max(deltaSeconds ?? 0, 0), 0.25);
+    if (dt <= 0) return;
+
+    const ms = dt * 1000;
+    weatherAutoState.emaMs = weatherAutoState.emaMs * 0.9 + ms * 0.1;
+
+    const over = weatherAutoState.emaMs > WEATHER_AUTO_LIMITS.highMs;
+    const under = weatherAutoState.emaMs < WEATHER_AUTO_LIMITS.lowMs;
+    if (over) {
+        weatherAutoState.overBudgetS += dt;
+        weatherAutoState.underBudgetS = 0;
+    } else if (under) {
+        weatherAutoState.underBudgetS += dt;
+        weatherAutoState.overBudgetS = 0;
+    } else {
+        weatherAutoState.overBudgetS = 0;
+        weatherAutoState.underBudgetS = 0;
+    }
+
+    if (weatherAutoState.cooldownS > 0) {
+        weatherAutoState.cooldownS = Math.max(0, weatherAutoState.cooldownS - dt);
+        return;
+    }
+
+    const mode = getWeatherSimMode();
+    if (weatherAutoState.overBudgetS >= WEATHER_AUTO_LIMITS.downDelayS) {
+        if (mode === '3d' && weatherAutoState.tier3d > 0) {
+            weatherAutoState.tier3d -= 1;
+            applyWeatherAutoTier(mode);
+        } else if (mode === '2d' && weatherAutoState.tier2d > 0) {
+            weatherAutoState.tier2d -= 1;
+            applyWeatherAutoTier(mode);
+        }
+        weatherAutoState.cooldownS = WEATHER_AUTO_LIMITS.cooldownDownS;
+        weatherAutoState.overBudgetS = 0;
+    } else if (weatherAutoState.underBudgetS >= WEATHER_AUTO_LIMITS.upDelayS) {
+        if (mode === '3d' && weatherAutoState.tier3d < WEATHER_AUTO_TIERS_3D.length - 1) {
+            weatherAutoState.tier3d += 1;
+            applyWeatherAutoTier(mode);
+        } else if (mode === '2d' && weatherAutoState.tier2d < WEATHER_AUTO_TIERS_2D.length - 1) {
+            weatherAutoState.tier2d += 1;
+            applyWeatherAutoTier(mode);
+        }
+        weatherAutoState.cooldownS = WEATHER_AUTO_LIMITS.cooldownUpS;
+        weatherAutoState.underBudgetS = 0;
+    }
+}
 function handleWaterCycleUpdate() {
     updateRangeLabels();
     void selectWaterCycleSystemIfNeeded();
     syncVolumeSliceRange();
     applyWaterCycleConfig();
     rebuildWaterCycleClouds(new THREE.Vector3().copy(dirLight.position).normalize());
+}
+
+function handleWeatherAutoToggle() {
+    if (weatherAutoScaleEl?.checked) {
+        enableWeatherAutoScale();
+    } else {
+        disableWeatherAutoScale();
+    }
 }
 
 [atmosphereEl, atmosphereAlphaEl, atmosphereColorEl, atmosphereToggleEl].forEach((el) => {
@@ -1672,6 +1876,9 @@ function handleWaterCycleUpdate() {
     el.addEventListener(el.type === 'checkbox' ? 'change' : (el.type === 'color' ? 'input' : 'change'), handleWaterCycleUpdate);
     if (el.type === 'range') el.addEventListener('input', handleWaterCycleUpdate);
 });
+if (weatherAutoScaleEl) {
+    weatherAutoScaleEl.addEventListener('change', handleWeatherAutoToggle);
+}
 if (volumeSliceEl) {
     volumeSliceEl.addEventListener('input', (e) => setVolumeSliceFromUI(Number(e.target.value)));
     volumeSliceEl.addEventListener('change', (e) => setVolumeSliceFromUI(Number(e.target.value)));
@@ -1685,6 +1892,9 @@ if (waterCycleStepBtn) {
         // Advance by 10 simulated minutes and force a readback so visuals update immediately.
         waterCycleSystem.update(0, weatherSunLocal, { dtSimOverride: 600, forceReadback: true });
     });
+}
+if (weatherAutoScaleEl?.checked) {
+    enableWeatherAutoScale();
 }
 
 // Surface action global trigger

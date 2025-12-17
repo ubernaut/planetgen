@@ -242,8 +242,10 @@ recent progress:
 - ✅ Browser verified: all changes work, no errors
 - ✅ index.js: Removed duplicate `presets` object, now using `PRESETS` from constants.js
 - ✅ index.js: Updated `applyPreset()` to use `PRESETS` instead of local `presets`
+- ✅ Added weather auto-scaling toggle that adjusts volume resolution/readback Hz/raymarch settings based on frame-time budget (manual settings restore when off).
 
 ### Remaining Work
 
 - Continue module integration: move DOM/state wiring into UIManager and delete legacy builders left in index.js
 - Add more constants for physics values (walkSpeed, gravity, etc.) in TinyPlanetControls
+- Consider weather auto-scaling refinements: adapter-based starting tier and optional 3D→2D fallback when budget is missed at lowest tier

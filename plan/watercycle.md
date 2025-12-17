@@ -242,6 +242,7 @@ All passes use the same concurrency rule: **each invocation writes only its own 
 - 2025-12-15: Added a 3D volume atlas debug view option to the Weather debug selector; when selected it overlays the packed atlas in-screen so we can see if the volume produces qc/qr even when the column maps look empty.
 - 2025-12-15: Cranked v2 moisture sources and relaxed sinks: stronger evap (esp. ocean), easier condensation, slower rain-out/evap, lower fall speed, seeded boundary-layer qc/qv, and increased collapse sampling to 28 layers so 2D maps pick up thin clouds; boosted atlas contrast again.
 - 2025-12-15: Added vertical slice thickness control (km) and stronger high-res scaling: evap/condense boosted with resolution, rain-out slowed and fall speed reduced with resolution, atlas contrast scales with `64/N`, and raymarch steps increase with N to keep high-res clouds visible.
+- 2025-12-16: Added auto weather scaling (HUD toggle) that steps volume resolution/readback Hz/raymarch bundle up or down based on frame-time budget.
 
 ## Upcoming (Seasons, Moon, Surface coupling)
 - Axial tilt & seasons: add axial tilt slider and orbital day-of-year to drive sun declination; update sunDir each frame from tilt + orbital position so hemispheres alternate seasons.
