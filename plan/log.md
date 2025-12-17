@@ -91,3 +91,4 @@ llm instructions for this file: this file is a log of development. It's used to 
 - 2025-12-16: Added a volume-grid weather debug mode that draws cell borders on the volume slice preview. Test: `npm test`.
 - 2025-12-16: Added 3D volume grid wireframe overlay in the volumetric cloud shader (debug mode). Test: `npm test`.
 - 2025-12-16: Added raymarch step min/max sliders and ray bundling control; plumbed through to the volumetric cloud shader with bundled world rays. Test: `npm test`.
+- 2025-12-16: Added auto weather scaling (HUD toggle) that adjusts volume resolution/readback Hz/raymarch settings based on frame-time budget, with manual settings restored when auto is off.

@@ -102,7 +102,13 @@ export class UIManager {
     applyPreset(key) {
         const preset = PRESETS[key] || PRESETS.balanced;
         if (this.els.preset) this.els.preset.value = key;
-        if (this.els.cloudToggle) this.els.cloudToggle.checked = false;
+        if (this.els.atmosphereToggle && preset.atmosphereEnabled !== undefined) {
+            this.els.atmosphereToggle.checked = !!preset.atmosphereEnabled;
+        }
+        if (this.els.cloudToggle) {
+            const enabled = preset.cloudEnabled !== undefined ? !!preset.cloudEnabled : false;
+            this.els.cloudToggle.checked = enabled;
+        }
         if (this.els.resolution) this.els.resolution.value = preset.resolution;
         if (this.els.plates) this.els.plates.value = preset.numPlates;
         if (this.els.plateSizeVariance) this.els.plateSizeVariance.value = preset.plateSizeVariance ?? 0.35;
@@ -122,6 +128,13 @@ export class UIManager {
         if (this.els.iceCap) this.els.iceCap.value = preset.iceCap ?? 0.15;
         if (this.els.plateDelta) this.els.plateDelta.value = preset.plateDelta ?? 1.25;
         if (this.els.faultType) this.els.faultType.value = preset.faultType || 'ridge';
+        if (this.els.cloudAlpha && preset.cloudAlpha !== undefined) this.els.cloudAlpha.value = preset.cloudAlpha;
+        if (this.els.cloudSpeed && preset.cloudSpeed !== undefined) this.els.cloudSpeed.value = preset.cloudSpeed;
+        if (this.els.cloudQuantity && preset.cloudQuantity !== undefined) this.els.cloudQuantity.value = preset.cloudQuantity;
+        if (this.els.cloudHeight && preset.cloudHeight !== undefined) this.els.cloudHeight.value = preset.cloudHeight;
+        if (this.els.cloudColor && preset.cloudColor !== undefined) this.els.cloudColor.value = preset.cloudColor;
+        if (this.els.cloudResolution && preset.cloudResolution !== undefined) this.els.cloudResolution.value = preset.cloudResolution;
+        if (this.els.cloudShader && preset.cloudShader !== undefined) this.els.cloudShader.value = preset.cloudShader;
         this.updateRangeLabels();
     }
 
@@ -298,7 +311,7 @@ export class UIManager {
         const next = show ?? this.els.configPanel.style.display !== 'block';
         this.els.configPanel.style.display = next ? 'block' : 'none';
         this.els.configToggle.setAttribute('aria-expanded', next.toString());
-        if (this.els.reticle) this.els.reticle.style.display = next ? 'none' : 'block';
+        if (this.els.reticle && next) this.els.reticle.style.display = 'none';
     }
 
     syncMobileVisibility(isMobile, inTinyMode) {
@@ -423,6 +436,13 @@ export class UIManager {
         wrapper.style.border = '1px solid var(--border)';
         wrapper.style.padding = '8px';
         wrapper.style.marginBottom = '8px';
+        const tooltips = {
+            alpha: 'Opacity of this cloud layer.',
+            speed: 'Animation speed for this cloud layer.',
+            quantity: 'Coverage and density for this cloud layer.',
+            height: 'Altitude offset for this cloud layer.',
+            resolution: 'Texture resolution for this cloud layer.'
+        };
         const idLabel = document.createElement('div');
         idLabel.textContent = `Layer ${layer.label || this.cloudLayerSettings.length + 1}`;
         idLabel.style.fontSize = '12px';
@@ -434,6 +454,7 @@ export class UIManager {
             field.className = 'field';
             const l = document.createElement('label');
             l.textContent = label;
+            if (tooltips[key]) l.title = tooltips[key];
             const row = document.createElement('div');
             row.className = 'range-row';
             const input = document.createElement('input');
@@ -442,6 +463,7 @@ export class UIManager {
             input.max = max;
             input.step = step;
             input.value = layer[key];
+            if (tooltips[key]) input.title = tooltips[key];
             const span = document.createElement('span');
             span.className = 'value';
             span.textContent = Number(layer[key]).toFixed(step < 1 ? 2 : 0);
@@ -461,6 +483,7 @@ export class UIManager {
         const toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.checked = layer.enabled;
+        toggle.title = 'Enable this cloud layer.';
         toggle.addEventListener('change', () => {
             layer.enabled = toggle.checked;
             if(this.callbacks.onCloudUpdate) this.callbacks.onCloudUpdate();
@@ -480,6 +503,7 @@ export class UIManager {
         const shaderLabel = document.createElement('label');
         shaderLabel.textContent = 'Shader';
         const shaderSelect = document.createElement('select');
+        shaderSelect.title = 'Noise type used to generate this layer.';
         ['fbm','billow','cellular'].forEach((m) => {
             const opt = document.createElement('option');
             opt.value = m;
@@ -502,6 +526,7 @@ export class UIManager {
         const colorInput = document.createElement('input');
         colorInput.type = 'color';
         colorInput.value = layer.color;
+        colorInput.title = 'Tint for this cloud layer.';
         colorInput.addEventListener('input', () => {
             layer.color = colorInput.value;
             if(this.callbacks.onCloudUpdate) this.callbacks.onCloudUpdate();
