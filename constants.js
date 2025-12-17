@@ -29,7 +29,7 @@ export const DEFAULT_WALK_SPEED = 3.5;
 export const DEFAULT_RUN_SPEED = 6.5;
 export const DEFAULT_FLY_SPEED = 8.0;
 export const DEFAULT_SWIM_SPEED = 2.5;
-export const DEFAULT_JUMP_FORCE = 2.0;
+export const DEFAULT_JUMP_FORCE = 6.0;
 export const DEFAULT_GRAVITY = 30.0;
 export const DEFAULT_PLAYER_HEIGHT = 0.04;
 
@@ -89,7 +89,40 @@ export const PRESETS = {
         atmosphereHeight: 0.5,
         atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
-        faultType: 'ridge'
+        faultType: 'ridge',
+        atmosphereEnabled: true,
+        cloudEnabled: false,
+        cloudAlpha: DEFAULT_CLOUD_ALPHA,
+        cloudSpeed: DEFAULT_CLOUD_SPEED,
+        cloudQuantity: DEFAULT_CLOUD_QUANTITY,
+        cloudHeight: DEFAULT_CLOUD_HEIGHT,
+        cloudColor: DEFAULT_CLOUD_COLOR,
+        cloudResolution: DEFAULT_CLOUD_RESOLUTION,
+        cloudShader: 'billow',
+        waterCycleEnabled: true,
+        waterCycleCloudEnabled: true,
+        waterCycleRun: true,
+        weatherAutoScale: false,
+        weatherSimMode: '3d',
+        weatherVolumeRes: 8,
+        weatherRayStepsMin: 4,
+        weatherRayStepsMax: 6,
+        weatherRayBundle: 8,
+        weatherAtmoThickness: 60,
+        axialTilt: DEFAULT_AXIAL_TILT_DEG,
+        seasonProgress: DEFAULT_SEASON_PHASE,
+        weatherDebug: 'off',
+        weatherSpeed: DEFAULT_WEATHER_SPEED_MINUTES_PER_SEC,
+        weatherUpdateHz: 1,
+        weatherMoistureLayers: DEFAULT_WEATHER_MOISTURE_LAYERS,
+        weatherEvap: DEFAULT_WEATHER_EVAP_STRENGTH,
+        weatherPrecip: DEFAULT_WEATHER_PRECIP_STRENGTH,
+        weatherWind: DEFAULT_WEATHER_WIND_STRENGTH,
+        weatherWetness: DEFAULT_WEATHER_WETNESS_STRENGTH,
+        weatherOceanInertia: DEFAULT_WEATHER_OCEAN_INERTIA,
+        weatherRainFxEnabled: true,
+        weatherRainFx: 1,
+        weatherRainHaze: DEFAULT_WEATHER_RAIN_HAZE
     },
     balanced: {
         resolution: 384,
@@ -102,7 +135,7 @@ export const PRESETS = {
         heightScale: 18.2,
         seaLevel: 0.53,
         smoothPasses: 20,
-        subdivisions: 16,
+        subdivisions: 128,
         iceCap: 0.12,
         plateDelta: 1.25,
         plateSizeVariance: 0.35,
@@ -111,7 +144,8 @@ export const PRESETS = {
         atmosphereHeight: 0.5,
         atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
-        faultType: 'mixed'
+        faultType: 'mixed',
+        weatherAutoScale: true
     },
     high: {
         resolution: 384,
@@ -133,6 +167,7 @@ export const PRESETS = {
         atmosphereHeight: 0.5,
         atmosphereAlpha: 1.0,
         atmosphereColor: '#4da8ff',
-        faultType: 'ridge'
+        faultType: 'ridge',
+        weatherAutoScale: true
     }
 };

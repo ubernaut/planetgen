@@ -37,10 +37,10 @@ export class SceneManager {
 
         // Controls
         this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-        this.controls.rotateSpeed = 1.0;
-        this.controls.zoomSpeed = 1.2;
-        this.controls.panSpeed = 0.8;
-        this.controls.dynamicDampingFactor = 0.15;
+        this.controls.rotateSpeed = 2.2;
+        this.controls.zoomSpeed = 2.0;
+        this.controls.panSpeed = 1.0;
+        this.controls.dynamicDampingFactor = 0.1;
         this.controls.noPan = true;
         this.controls.minDistance = 12;
         this.controls.maxDistance = 60;

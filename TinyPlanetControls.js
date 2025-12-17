@@ -18,7 +18,7 @@ export class TinyPlanetControls {
         this.runSpeed = 6.5;
         this.flySpeed = 8.0;
         this.swimSpeed = 2.5;
-        this.jumpForce = 2.0;
+        this.jumpForce = 6.0;
         this.gravity = 30.0;
         this.playerHeight = 0.04;
         this.accelGround = 32;
@@ -41,13 +41,23 @@ export class TinyPlanetControls {
         this.moveDown = false;
         this.rollLeft = false;
         this.rollRight = false;
+        this.lookUp = false;
+        this.lookDown = false;
+        this.lookLeft = false;
+        this.lookRight = false;
         this.isRunning = false;
         this.canJump = false;
+        this.keyLookYawVelocity = 0;
+        this.keyLookPitchVelocity = 0;
+        this.keyLookRollVelocity = 0;
 
         this.velocity = new THREE.Vector3();
         this.direction = new THREE.Vector3();
         this.verticalVelocity = 0;
         this.horizontalVelocity = new THREE.Vector3();
+
+        this.keyLookSpeed = 1.8;
+        this.keyRollSpeed = 2.4;
 
         // The player rig
         this.player = new THREE.Object3D();
@@ -58,6 +68,7 @@ export class TinyPlanetControls {
         this.worldUp = new THREE.Vector3();
         this.dummyVec = new THREE.Vector3();
         this.dummyQuat = new THREE.Quaternion();
+        this.camLocalUp = new THREE.Vector3();
 
         // Bind events
         this.onKeyDown = this.onKeyDown.bind(this);
@@ -147,9 +158,13 @@ export class TinyPlanetControls {
         this.moveForward = this.moveBackward = this.moveLeft = this.moveRight = false;
         this.moveUp = this.moveDown = false;
         this.rollLeft = this.rollRight = false;
+        this.lookUp = this.lookDown = this.lookLeft = this.lookRight = false;
         this.isRunning = false;
         this.canJump = false;
         this.horizontalVelocity.set(0, 0, 0);
+        this.keyLookYawVelocity = 0;
+        this.keyLookPitchVelocity = 0;
+        this.keyLookRollVelocity = 0;
     }
 
     addListeners() {
@@ -176,18 +191,16 @@ export class TinyPlanetControls {
     onKeyDown(event) {
         switch (event.code) {
             case 'ArrowUp':
-                this.camera.rotateX(-0.02);
-                this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
+                this.lookUp = true;
                 break;
             case 'ArrowDown':
-                this.camera.rotateX(0.02);
-                this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
+                this.lookDown = true;
                 break;
             case 'ArrowLeft':
-                this.player.rotateY(0.03);
+                this.lookLeft = true;
                 break;
             case 'ArrowRight':
-                this.player.rotateY(-0.03);
+                this.lookRight = true;
                 break;
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
@@ -211,6 +224,10 @@ export class TinyPlanetControls {
 
     onKeyUp(event) {
         switch (event.code) {
+            case 'ArrowUp': this.lookUp = false; break;
+            case 'ArrowDown': this.lookDown = false; break;
+            case 'ArrowLeft': this.lookLeft = false; break;
+            case 'ArrowRight': this.lookRight = false; break;
             case 'KeyW': this.moveForward = false; break;
             case 'KeyA': this.moveLeft = false; break;
             case 'KeyS': this.moveBackward = false; break;
@@ -324,7 +341,7 @@ export class TinyPlanetControls {
             if (this.externalInput.consume('surface')) {
                 this.snapToSurface();
             }
-            if (!this.isFlying && !this.isSwimming && this.canJump && this.externalInput.consume('jump')) {
+            if (!this.isFlying && this.canJump && this.externalInput.consume('jump')) {
                 this.verticalVelocity = this.jumpForce;
                 this.canJump = false;
             }
@@ -338,50 +355,35 @@ export class TinyPlanetControls {
             }
         }
 
-        // Check for water
-        let isFrozen = false;
-        if (this.planetMesh && this.planetMesh.userData.forge) {
-            const forge = this.planetMesh.userData.forge;
-            const settings = this.planetMesh.userData.settings;
+        const keyPitch = (this.lookUp ? 1 : 0) - (this.lookDown ? 1 : 0);
+        const keyYaw = (this.lookLeft ? 1 : 0) - (this.lookRight ? 1 : 0);
+        const keyRoll = (rollLeft ? 1 : 0) - (rollRight ? 1 : 0);
+        const targetYaw = keyYaw * this.keyLookSpeed;
+        const targetPitch = keyPitch * this.keyLookSpeed;
+        const targetRoll = keyRoll * this.keyRollSpeed;
 
-            // Check for ice (World Y based)
-            this.player.getWorldPosition(this.dummyVec);
-            const pole = Math.abs(this.dummyVec.normalize().y);
-            const iceStart = Math.max(0.0, Math.min(1.0, 1.0 - settings.iceCap));
-            isFrozen = pole > iceStart;
-            
-            // Get current position info
-            const dir = this.player.position.clone().normalize();
-            const waterData = forge.getWaterDataAt(dir);
-            
-            // Calculate physical heights
-            const waterSurfaceHeight = settings.radius + (waterData.waterHeight - settings.seaLevel) * settings.heightScale;
-            const currentRadius = this.player.position.length();
-            const inDeepWater = waterData.hasWater && waterData.waterMask > 0.15;
-            
-            // Enter swim mode if in sufficiently deep water and below surface (plus small margin)
-            // But NOT if it's frozen
-            if (!isFrozen && inDeepWater && currentRadius < waterSurfaceHeight + 0.05) {
-                if (!this.isSwimming) {
-                    this.isSwimming = true;
-                    this.verticalVelocity = 0;
-                }
-            } else if (this.isSwimming && (currentRadius > waterSurfaceHeight + 0.3 || !inDeepWater || isFrozen)) {
-                // Exit swim mode if we rise above surface or leave water or enter ice
-                this.isSwimming = false;
-                // Re-align to gravity and reset pitch to avoid tilted exit
-                const up = this.player.position.clone().normalize();
-                const realign = new THREE.Quaternion().setFromUnitVectors(this.player.up, up);
-                this.player.quaternion.premultiply(realign);
-                this.player.up.copy(up);
-                this.camera.rotation.x = 0;
-                this.verticalVelocity = 0;
+        this.keyLookYawVelocity = targetYaw;
+        this.keyLookPitchVelocity = targetPitch;
+        this.keyLookRollVelocity = targetRoll;
+
+        if (Math.abs(this.keyLookYawVelocity) > 1e-4) {
+            if (this.isFlying) {
+                this.camLocalUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+                this.player.rotateOnAxis(this.camLocalUp, this.keyLookYawVelocity * dt);
+            } else {
+                this.player.rotateY(this.keyLookYawVelocity * dt);
             }
+        }
+        if (Math.abs(this.keyLookPitchVelocity) > 1e-4) {
+            this.camera.rotateX(this.keyLookPitchVelocity * dt);
+            this.camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.camera.rotation.x));
+        }
+        if (Math.abs(this.keyLookRollVelocity) > 1e-4) {
+            this.camera.rotateZ(this.keyLookRollVelocity * dt);
         }
 
         let speed = this.walkSpeed;
         if (this.isFlying) speed = this.flySpeed;
-        else if (this.isSwimming) speed = this.swimSpeed;
         else if (runActive) speed = this.runSpeed;
 
         const moveVec = new THREE.Vector3();
@@ -392,14 +394,12 @@ export class TinyPlanetControls {
         if (this.isFlying) moveVec.z *= -1; // Keep forward/backward consistent with ground controls
         moveVec.normalize();
 
-        if (this.isFlying || this.isSwimming) {
+        if (this.isFlying) {
             this.horizontalVelocity.multiplyScalar(0.5);
             const mv = moveVec.clone().multiplyScalar(speed * delta);
             mv.applyQuaternion(this.camera.quaternion);
             mv.applyQuaternion(this.player.quaternion); 
             this.player.position.add(mv);
-            const roll = Number(this.rollLeft) - Number(this.rollRight);
-            if (roll !== 0) this.camera.rotateZ(roll * 2.0 * delta);
         } else {
             const up = this.player.position.clone().normalize();
             const forward = new THREE.Vector3(0, 0, -1)

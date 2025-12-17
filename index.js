@@ -7,7 +7,7 @@ import { WaterCycleSystem } from './WaterCycleSystem.js';
 import { WaterCycleVolumeSystem } from './WaterCycleVolumeSystem.js';
 import { RainSystem } from './RainSystem.js';
 import { clamp, isMobileDevice, sampleDataTextureRGBA } from './utils.js';
-import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, MAX_DELTA_TIME } from './constants.js';
+import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, MAX_DELTA_TIME, PRESETS } from './constants.js';
 import { UIManager } from './UIManager.js';
 
 const canvas = document.getElementById('viewport');
@@ -17,6 +17,9 @@ const hudContentEl = document.getElementById('hudContent');
 const statusEl = document.getElementById('status');
 const presetEl = document.getElementById('preset');
 const regenBtn = document.getElementById('regen');
+const helpToggleEl = document.getElementById('helpToggle');
+const helpPanelEl = document.getElementById('helpPanel');
+const helpContentEl = document.getElementById('helpContent');
 const resolutionEl = document.getElementById('resolution');
 const platesEl = document.getElementById('plates');
 const plateSizeVarianceEl = document.getElementById('plateSizeVariance');
@@ -320,7 +323,8 @@ function updateVolumeDebugSprite() {
 const ui = new UIManager({
     onRegen: () => queueAutoRegen(),
     onPreset: (key) => {
-        ui.applyPreset(key);
+        applyPreset(key);
+        updateQualityParam(key);
         ui.setStatus('Preset applied. Regenerating…');
         queueAutoRegen();
     },
@@ -407,14 +411,15 @@ input.setLookMode('orbit');
 const tinyControls = new TinyPlanetControls(camera, renderer.domElement, scene, () => {
     controls.enabled = true;
     ui.setStatus('');
-                if (savedOrbitState) {
-                    controls.target.copy(savedOrbitState.target);
-                    camera.position.copy(savedOrbitState.position);
-                    savedOrbitState = null;
-                }
-                updateOrbitBounds();
-                input.setLookMode('orbit');
-            }, input);
+    if (savedOrbitState) {
+        controls.target.copy(savedOrbitState.target);
+        camera.position.copy(savedOrbitState.position);
+        savedOrbitState = null;
+    }
+    updateOrbitBounds();
+    resetTrackballState();
+    input.setLookMode('orbit');
+}, input);
 const clock = new THREE.Clock();
 
 let planet = null;
@@ -534,6 +539,14 @@ window.addEventListener('mousedown', (event) => {
             }
         }
     }
+});
+renderer.domElement.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    if (!tinyControls.enabled) return;
+    if (isMobileDevice()) return;
+    if (hudEl && hudEl.contains(event.target)) return;
+    if (document.pointerLockElement === renderer.domElement) return;
+    renderer.domElement.requestPointerLock?.();
 });
 
 function handleSurfaceAction() {
@@ -817,7 +830,7 @@ function updateOrbitBounds() {
     const scale = getPlanetScale();
     const surfaceRadius = Math.max(0.5, planetRadius * scale);
     controls.minDistance = Math.max(0.2, surfaceRadius * 0.1);
-    controls.maxDistance = Math.max(surfaceRadius * 8, controls.minDistance + 1);
+    controls.maxDistance = Math.max(surfaceRadius * 16, controls.minDistance + 1);
     const camOffset = camera.position.clone().sub(controls.target);
     const dist = camOffset.length();
     const clampedDist = clamp(dist, controls.minDistance, controls.maxDistance);
@@ -830,6 +843,15 @@ function updateOrbitBounds() {
     camera.updateProjectionMatrix();
 }
 
+function resetTrackballState() {
+    if (!controls) return;
+    if (controls.state !== undefined) controls.state = -1;
+    if (controls.keyState !== undefined) controls.keyState = -1;
+    if (controls._movePrev && controls._moveCurr) controls._movePrev.copy(controls._moveCurr);
+    if (controls._zoomStart && controls._zoomEnd) controls._zoomStart.copy(controls._zoomEnd);
+    if (controls._panStart && controls._panEnd) controls._panStart.copy(controls._panEnd);
+}
+
 function applyPlanetScale() {
     planetManager.applyPlanetScale(getPlanetDiameterKm());
     updateOrbitBounds();
@@ -839,18 +861,54 @@ function syncMobileVisibility() {
     if (!mobileControlsEl) return;
     const mobile = isMobileDevice();
     const inTiny = tinyControls.enabled;
-    if (!mobile) {
-        mobileControlsEl.style.display = 'none';
-    } else {
-        mobileControlsEl.style.display = 'block';
-        if (movePadEl) movePadEl.style.display = inTiny ? 'grid' : 'none';
-        if (lookPadEl) lookPadEl.style.display = inTiny ? 'grid' : 'none';
-        const actionColumn = mobileControlsEl.querySelector('.action-column');
-        if (actionColumn) actionColumn.style.display = inTiny ? 'grid' : 'none';
-        if (surfaceOnlyBtn) surfaceOnlyBtn.style.display = inTiny ? 'none' : 'inline-flex';
+    mobileControlsEl.style.display = 'block';
+    if (movePadEl) movePadEl.style.display = mobile && inTiny ? 'grid' : 'none';
+    if (lookPadEl) lookPadEl.style.display = mobile && inTiny ? 'grid' : 'none';
+    const actionColumn = mobileControlsEl.querySelector('.action-column');
+    if (actionColumn) actionColumn.style.display = inTiny ? 'grid' : 'none';
+    if (surfaceOnlyBtn) surfaceOnlyBtn.style.display = inTiny ? 'none' : 'inline-flex';
+    if (reticleEl) {
+        const showReticle = !mobile || inTiny;
+        reticleEl.style.display = showReticle ? 'block' : 'none';
     }
-    // Hide reticle - no longer needed for orbit or FPS mode.
-    if (reticleEl) reticleEl.style.display = 'none';
+    updateHelpContent();
+}
+
+function updateHelpContent() {
+    if (!helpContentEl) return;
+    const mobile = isMobileDevice();
+    const inTiny = tinyControls.enabled;
+    let html = '';
+
+    if (inTiny) {
+        html += '<h4>First Person</h4><ul>';
+        if (!mobile) html += '<li>Mouse move to look (click to capture)</li>';
+        html += '<li>WASD to move, Shift to run, Space to jump</li>';
+        html += '<li>Arrow keys to look, Q/E to roll</li>';
+        html += '<li>F to toggle fly, Ctrl to descend, Esc to exit</li>';
+        html += '<li>On-screen buttons: Jump, Fly, Surface, Exit, Run</li>';
+        html += '</ul>';
+        if (mobile) {
+            html += '<h4>Touch</h4><ul>';
+            html += '<li>Left stick moves, right stick looks</li>';
+            html += '</ul>';
+        }
+    } else {
+        html += '<h4>Orbit</h4><ul>';
+        html += '<li>Drag to orbit, scroll to zoom</li>';
+        html += '<li>Middle click or Surface button to enter first person</li>';
+        html += '</ul>';
+    }
+
+    helpContentEl.innerHTML = html;
+}
+
+function toggleHelpPanel() {
+    if (!helpPanelEl || !helpToggleEl) return;
+    const next = helpPanelEl.style.display !== 'block';
+    helpPanelEl.style.display = next ? 'block' : 'none';
+    helpToggleEl.setAttribute('aria-expanded', next.toString());
+    if (next) updateHelpContent();
 }
 
 function getWalkSpeed() {
@@ -880,6 +938,8 @@ function updateRangeLabels() {
 
 function applyPreset(key) {
     ui.applyPreset(key);
+    const preset = PRESETS[key] || PRESETS.balanced;
+    applyWeatherPreset(preset);
 }
 
 function readSettings() {
@@ -888,6 +948,76 @@ function readSettings() {
 
 function writeSettings(settings) {
     ui.writeSettings(settings);
+}
+
+function getQualityPresetFromUrl() {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search || '');
+    const quality = (params.get('quality') || '').toLowerCase();
+    if (quality === 'fast' || quality === 'balanced' || quality === 'high') return quality;
+    return null;
+}
+
+function updateQualityParam(key) {
+    if (typeof window === 'undefined') return;
+    const quality = (key || '').toLowerCase();
+    if (quality !== 'fast' && quality !== 'balanced' && quality !== 'high') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('quality', quality);
+    window.history.replaceState({}, '', url);
+}
+
+function applyWeatherPreset(preset) {
+    const setValue = (el, value) => {
+        if (!el || value === undefined || value === null) return false;
+        el.value = String(value);
+        return true;
+    };
+    const setChecked = (el, value) => {
+        if (!el || value === undefined || value === null) return false;
+        el.checked = !!value;
+        return true;
+    };
+
+    let touched = false;
+    touched = setChecked(waterCycleToggleEl, preset.waterCycleEnabled) || touched;
+    touched = setChecked(waterCycleCloudToggleEl, preset.waterCycleCloudEnabled) || touched;
+    touched = setChecked(waterCycleRunEl, preset.waterCycleRun) || touched;
+    touched = setValue(weatherSimModeEl, preset.weatherSimMode) || touched;
+    touched = setValue(weatherVolumeResEl, preset.weatherVolumeRes) || touched;
+    touched = setValue(weatherRayStepsMinEl, preset.weatherRayStepsMin) || touched;
+    touched = setValue(weatherRayStepsMaxEl, preset.weatherRayStepsMax) || touched;
+    touched = setValue(weatherRayBundleEl, preset.weatherRayBundle) || touched;
+    touched = setValue(weatherAtmoThicknessEl, preset.weatherAtmoThickness) || touched;
+    touched = setValue(axialTiltEl, preset.axialTilt) || touched;
+    touched = setValue(seasonProgressEl, preset.seasonProgress) || touched;
+    touched = setValue(weatherDebugEl, preset.weatherDebug) || touched;
+    touched = setValue(weatherSpeedEl, preset.weatherSpeed) || touched;
+    touched = setValue(weatherUpdateHzEl, preset.weatherUpdateHz) || touched;
+    touched = setValue(weatherMoistureLayersEl, preset.weatherMoistureLayers) || touched;
+    touched = setValue(weatherEvapEl, preset.weatherEvap) || touched;
+    touched = setValue(weatherPrecipEl, preset.weatherPrecip) || touched;
+    touched = setValue(weatherWindEl, preset.weatherWind) || touched;
+    touched = setValue(weatherWetnessEl, preset.weatherWetness) || touched;
+    touched = setValue(weatherOceanInertiaEl, preset.weatherOceanInertia) || touched;
+    touched = setChecked(weatherRainFxToggleEl, preset.weatherRainFxEnabled) || touched;
+    touched = setValue(weatherRainFxEl, preset.weatherRainFx) || touched;
+    touched = setValue(weatherRainHazeEl, preset.weatherRainHaze) || touched;
+
+    let autoScaleApplied = false;
+    if (weatherAutoScaleEl && preset.weatherAutoScale !== undefined && preset.weatherAutoScale !== null) {
+        weatherAutoScaleEl.checked = !!preset.weatherAutoScale;
+        if (weatherAutoScaleEl.checked) {
+            enableWeatherAutoScale();
+            autoScaleApplied = true;
+        } else {
+            disableWeatherAutoScale({ keepCurrent: true });
+        }
+    }
+
+    if (touched && !autoScaleApplied) {
+        handleWaterCycleUpdate();
+    }
 }
 
 async function generateWorld(presetKey) {
@@ -1619,9 +1749,12 @@ function enableWeatherAutoScale() {
     applyWeatherAutoTier(mode);
 }
 
-function disableWeatherAutoScale() {
+function disableWeatherAutoScale(options = {}) {
+    const keepCurrent = !!options.keepCurrent;
     setWeatherAutoUiDisabled(false);
-    restoreWeatherManualSettings(weatherAutoState.manual);
+    if (!keepCurrent) {
+        restoreWeatherManualSettings(weatherAutoState.manual);
+    }
     weatherAutoState.manual = null;
 }
 
@@ -1879,6 +2012,9 @@ function handleWeatherAutoToggle() {
 if (weatherAutoScaleEl) {
     weatherAutoScaleEl.addEventListener('change', handleWeatherAutoToggle);
 }
+if (helpToggleEl) {
+    helpToggleEl.addEventListener('click', toggleHelpPanel);
+}
 if (volumeSliceEl) {
     volumeSliceEl.addEventListener('input', (e) => setVolumeSliceFromUI(Number(e.target.value)));
     volumeSliceEl.addEventListener('change', (e) => setVolumeSliceFromUI(Number(e.target.value)));
@@ -1918,6 +2054,11 @@ window.addEventListener('resize', onResize);
 if (invertLookEl) invertLookEl.addEventListener('change', updateRangeLabels);
 setWaterCycleUiDisabled(true);
 void selectWaterCycleSystemIfNeeded();
+
+const urlQualityPreset = getQualityPresetFromUrl();
+if (urlQualityPreset && presetEl) {
+    presetEl.value = urlQualityPreset;
+}
 
 applyPreset(presetEl.value);
 generateWorld(presetEl.value);
