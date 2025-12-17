@@ -580,8 +580,29 @@
         <div class="field">
           <label for="weatherVolumeRes">Volume resolution (N)</label>
           <div class="range-row">
-            <input id="weatherVolumeRes" type="range" min="32" max="128" step="16" value="32">
-            <span class="value" id="weatherVolumeResValue">32</span>
+            <input id="weatherVolumeRes" type="range" min="1" max="128" step="1" value="8">
+            <span class="value" id="weatherVolumeResValue">8</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayStepsMin">Raymarch steps (min)</label>
+          <div class="range-row">
+            <input id="weatherRayStepsMin" type="range" min="4" max="128" step="1" value="28">
+            <span class="value" id="weatherRayStepsMinValue">28</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayStepsMax">Raymarch steps (max)</label>
+          <div class="range-row">
+            <input id="weatherRayStepsMax" type="range" min="4" max="128" step="1" value="48">
+            <span class="value" id="weatherRayStepsMaxValue">48</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayBundle">Ray bundling (pixels)</label>
+          <div class="range-row">
+            <input id="weatherRayBundle" type="range" min="1" max="100" step="1" value="1">
+            <span class="value" id="weatherRayBundleValue">1</span>
           </div>
         </div>
         <div class="field">
@@ -617,6 +638,7 @@
             <option value="snow">Snowpack</option>
             <option value="wind">Wind</option>
             <option value="volume">Volume atlas (3D)</option>
+            <option value="volume-grid">Volume grid (3D wireframe)</option>
           </select>
         </div>
         <div class="field" id="volumeSliceField" style="display:none;">

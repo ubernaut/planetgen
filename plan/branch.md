@@ -4,10 +4,12 @@ immediate goals:
 
 - Fix TinyPlanet first-person (spawn height/orientation, pointer-lock/mouselook, mobile input). Current state: broken after refactor; attempts failed (still spawning underground/inward-facing).
 - Weather/space: tune 3D voxel clouds at high resolution, add axial tilt + physical sun/moon for seasons and moon phases; wire precip → surface moisture/biomes/erosion/glaciers.
+- Weather/space: add raymarch budget bounds and ray bundling controls for volumetric cloud performance tuning.
 
 recent progress:
 
 - Fixed camera zoom issue after exiting Tiny Planet mode.
+- Added volumetric cloud raymarch controls (min/max steps + ray bundling slider) and wired to the modular cloud shader.
 - Implemented "Rocky Areas": Add surface detail/roughness modulation based on slope/height.
 - Implemented sliding physics on ice surfaces.
 - Refactored index.js: Extracted rendering, UI, and Planet generation into separate modules (SceneManager, PlanetManager, UIManager).

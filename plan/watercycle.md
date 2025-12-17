@@ -146,6 +146,7 @@ Workgroup: `8×8` threads; dispatch `ceil(W/8) × ceil(H/8)`.
 - 2025-12-15: Added visual rain streak FX driven by the weather rain channel + local wind tilt, and updated the volumetric cloud shader to advect detail using the simulated wind field (aux map).
 - 2025-12-15: Added rain haze in the atmosphere shader by sampling the weather rain channel to boost Mie scattering in rainy regions; exposed a HUD control for haze strength.
 - 2025-12-15: Made the number of vertical moisture layers configurable (1–4). Default is 2 (boundary + free troposphere), with optional upper layers for richer transport.
+- 2025-12-16: Added HUD controls for volumetric cloud raymarch min/max steps and ray bundling (pixel block) sizing; wired through to the volume cloud shader.
 
 ## Configuration (HUD)
 - `Water cycle enabled (WebGPU)`: gates simulation updates and whether the weather texture is used for rendering.

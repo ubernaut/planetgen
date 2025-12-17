@@ -5,7 +5,7 @@ current architecture overview:
 - Renderer: `index.js` bootstraps Three.js (`WebGLRenderer`, scene, camera, lights), orbit controls, and a custom Tiny Planet first-person mode (`TinyPlanetControls`). It also owns UI wiring (sliders/selects) and regenerates worlds via `PlanetForge`.
 - Generation core: `worldgen.js` exports `PlanetForge`, handling tectonics (Voronoi-like plate simulation), hydraulic erosion, water masks, and mesh creation (icosahedron subdivisions + vertex displacement + attributes). Produces geometry, water masks, and settings stored on the planet mesh (`userData`).
 - Exploration controls: `TinyPlanetControls.js` implements a player rig attached to the planet mesh with walking/flying/swimming, gravity alignment, pointer lock, and WASD/mouse input. It reads `planetMesh.userData.forge/settings` for terrain/water heights to manage swim/ground states.
-- Atmosphere/clouds: handled in `index.js` via uniforms and cloud layer settings; UI-driven rebuilds and toggle controls.
+- Atmosphere/clouds: handled via AtmosphereSystem/CloudSystem with UI-driven rebuilds, plus volumetric cloud raymarch controls (step bounds and ray bundling) for tuning quality vs. performance.
 - UX/logic glue: `index.js` manages presets, auto-regeneration on parameter change, range label updates, resize handling, and status text.
 
 notable data/flow:

@@ -76,6 +76,12 @@ const waterCycleStepBtn = document.getElementById('waterCycleStep');
 const weatherSimModeEl = document.getElementById('weatherSimMode');
 const weatherVolumeResEl = document.getElementById('weatherVolumeRes');
 const weatherVolumeResValueEl = document.getElementById('weatherVolumeResValue');
+const weatherRayStepsMinEl = document.getElementById('weatherRayStepsMin');
+const weatherRayStepsMinValueEl = document.getElementById('weatherRayStepsMinValue');
+const weatherRayStepsMaxEl = document.getElementById('weatherRayStepsMax');
+const weatherRayStepsMaxValueEl = document.getElementById('weatherRayStepsMaxValue');
+const weatherRayBundleEl = document.getElementById('weatherRayBundle');
+const weatherRayBundleValueEl = document.getElementById('weatherRayBundleValue');
 const weatherAtmoThicknessEl = document.getElementById('weatherAtmoThickness');
 const weatherAtmoThicknessValueEl = document.getElementById('weatherAtmoThicknessValue');
 const axialTiltEl = document.getElementById('axialTilt');
@@ -216,9 +222,11 @@ function getVolumeDebugTexture() {
     const meta = getWeatherVolumeMeta();
     if (!atlas || !meta) return null;
     const N = meta.n || 0;
-    if (!volumeSliceTexture || volumeSliceTexture.image.width !== N || volumeSliceTexture.image.height !== N) {
-        const data = new Uint8Array(Math.max(1, N * N * 4));
-        volumeSliceTexture = new THREE.DataTexture(data, Math.max(1, N), Math.max(1, N), THREE.RGBAFormat, THREE.UnsignedByteType);
+    const cellSize = volumeDebugGrid ? 4 : 1;
+    const width = Math.max(1, N * cellSize);
+    if (!volumeSliceTexture || volumeSliceTexture.image.width !== width || volumeSliceTexture.image.height !== width) {
+        const data = new Uint8Array(Math.max(1, width * width * 4));
+        volumeSliceTexture = new THREE.DataTexture(data, width, width, THREE.RGBAFormat, THREE.UnsignedByteType);
         volumeSliceTexture.needsUpdate = true;
         volumeSliceTexture.wrapS = THREE.ClampToEdgeWrapping;
         volumeSliceTexture.wrapT = THREE.ClampToEdgeWrapping;
@@ -234,22 +242,60 @@ function getVolumeDebugTexture() {
     const atlasData = atlas.image?.data;
     if (!(atlasData && atlasData.length >= meta.atlasW * meta.atlasH * 4)) return atlas;
     const out = volumeSliceTexture.image.data;
+    const line = 0;
     for (let y = 0; y < N; y++) {
         const srcRow = ((tileY * N + y) * meta.atlasW + tileX * N) * 4;
-        const dstRow = y * N * 4;
-        // Visualize cloud (R) as grayscale, rain (G) as blue tint to spot precip.
         for (let x = 0; x < N; x++) {
             const si = srcRow + x * 4;
-            const di = dstRow + x * 4;
             const cloud = atlasData[si] ?? 0;
             const rain = atlasData[si + 1] ?? 0;
             const p = atlasData[si + 2] ?? 128;
             const rh = atlasData[si + 3] ?? 0;
             const c = Math.min(255, cloud * 2); // boost contrast
-            out[di + 0] = c;
-            out[di + 1] = Math.min(255, rain + c * 0.3);
-            out[di + 2] = Math.min(255, p);
-            out[di + 3] = Math.max(160, rh); // keep visible
+            const r = c;
+            const g = Math.min(255, rain + c * 0.3);
+            const b = Math.min(255, p);
+            const a = Math.max(160, rh); // keep visible
+            if (!volumeDebugGrid) {
+                const dstRow = y * width * 4;
+                const di = dstRow + x * 4;
+                out[di + 0] = r;
+                out[di + 1] = g;
+                out[di + 2] = b;
+                out[di + 3] = a;
+                continue;
+            }
+            const baseX = x * cellSize;
+            const baseY = y * cellSize;
+            for (let yy = 0; yy < cellSize; yy++) {
+                const dstRow = (baseY + yy) * width * 4;
+                for (let xx = 0; xx < cellSize; xx++) {
+                    const di = dstRow + (baseX + xx) * 4;
+                    const isLine = (xx === 0 || yy === 0);
+                    out[di + 0] = isLine ? line : r;
+                    out[di + 1] = isLine ? line : g;
+                    out[di + 2] = isLine ? line : b;
+                    out[di + 3] = isLine ? 255 : a;
+                }
+            }
+        }
+    }
+    if (volumeDebugGrid && width > 1) {
+        const last = width - 1;
+        for (let y = 0; y < width; y++) {
+            const di = (y * width + last) * 4;
+            out[di + 0] = line;
+            out[di + 1] = line;
+            out[di + 2] = line;
+            out[di + 3] = 255;
+        }
+        const base = last * width * 4;
+        for (let x = 0; x < width; x++) {
+            const di = base + x * 4;
+            out[di + 0] = line;
+            out[di + 1] = line;
+            out[di + 2] = line;
+            out[di + 3] = 255;
         }
     }
     volumeSliceTexture.needsUpdate = true;
@@ -402,8 +448,12 @@ const weatherTmpVecC = new THREE.Vector3();
 const weatherTmpVecD = new THREE.Vector3();
 const weatherWindWorld = new THREE.Vector3();
 let volumeDebugEnabled = false;
+let volumeDebugGrid = false;
 let volumeDebugSlice = 0;
 let volumeSliceTexture = null;
+let volumeRayStepsMin = 28;
+let volumeRayStepsMax = 48;
+let volumeRayBundle = 1;
 let fpsDiv = null;
 let fpsSMA = 60;
 
@@ -778,6 +828,23 @@ function getWalkSpeed() {
 
 function updateRangeLabels() {
     ui.updateRangeLabels();
+    if (weatherSpeedEl && weatherSpeedValueEl) weatherSpeedValueEl.textContent = Number(weatherSpeedEl.value).toFixed(0);
+    if (weatherUpdateHzEl && weatherUpdateHzValueEl) weatherUpdateHzValueEl.textContent = Number(weatherUpdateHzEl.value).toFixed(0);
+    if (weatherVolumeResEl && weatherVolumeResValueEl) weatherVolumeResValueEl.textContent = Number(weatherVolumeResEl.value).toFixed(0);
+    if (weatherRayStepsMinEl && weatherRayStepsMinValueEl) weatherRayStepsMinValueEl.textContent = Number(weatherRayStepsMinEl.value).toFixed(0);
+    if (weatherRayStepsMaxEl && weatherRayStepsMaxValueEl) weatherRayStepsMaxValueEl.textContent = Number(weatherRayStepsMaxEl.value).toFixed(0);
+    if (weatherRayBundleEl && weatherRayBundleValueEl) weatherRayBundleValueEl.textContent = Number(weatherRayBundleEl.value).toFixed(0);
+    if (weatherAtmoThicknessEl && weatherAtmoThicknessValueEl) weatherAtmoThicknessValueEl.textContent = Number(weatherAtmoThicknessEl.value).toFixed(0);
+    if (axialTiltEl && axialTiltValueEl) axialTiltValueEl.textContent = Number(axialTiltEl.value).toFixed(1);
+    if (seasonProgressEl && seasonProgressValueEl) seasonProgressValueEl.textContent = Number(seasonProgressEl.value).toFixed(2);
+    if (weatherMoistureLayersEl && weatherMoistureLayersValueEl) weatherMoistureLayersValueEl.textContent = Number(weatherMoistureLayersEl.value).toFixed(0);
+    if (weatherEvapEl && weatherEvapValueEl) weatherEvapValueEl.textContent = Number(weatherEvapEl.value).toFixed(2);
+    if (weatherPrecipEl && weatherPrecipValueEl) weatherPrecipValueEl.textContent = Number(weatherPrecipEl.value).toFixed(2);
+    if (weatherWindEl && weatherWindValueEl) weatherWindValueEl.textContent = Number(weatherWindEl.value).toFixed(2);
+    if (weatherWetnessEl && weatherWetnessValueEl) weatherWetnessValueEl.textContent = Number(weatherWetnessEl.value).toFixed(2);
+    if (weatherOceanInertiaEl && weatherOceanInertiaValueEl) weatherOceanInertiaValueEl.textContent = Number(weatherOceanInertiaEl.value).toFixed(2);
+    if (weatherRainFxEl && weatherRainFxValueEl) weatherRainFxValueEl.textContent = Number(weatherRainFxEl.value).toFixed(2);
+    if (weatherRainHazeEl && weatherRainHazeValueEl) weatherRainHazeValueEl.textContent = Number(weatherRainHazeEl.value).toFixed(2);
 }
 
 function applyPreset(key) {
@@ -1230,6 +1297,10 @@ function animate() {
             if (u.volumeExtentM) u.volumeExtentM.value = meta.extentM;
             if (u.metersPerUnit) u.metersPerUnit.value = (meta.planetRadiusM ?? DEFAULT_RADIUS_M) / BASE_RADIUS_UNITS;
         }
+        if (u.debugGrid) u.debugGrid.value = volumeDebugGrid ? 1.0 : 0.0;
+        if (u.rayStepsMin) u.rayStepsMin.value = volumeRayStepsMin;
+        if (u.rayStepsMax) u.rayStepsMax.value = volumeRayStepsMax;
+        if (u.bundleSize) u.bundleSize.value = volumeRayBundle;
     }
     updateVolumeDebugSprite();
 
@@ -1388,6 +1459,9 @@ const waterCycleUiControls = [
     waterCycleStepBtn,
     weatherSimModeEl,
     weatherVolumeResEl,
+    weatherRayStepsMinEl,
+    weatherRayStepsMaxEl,
+    weatherRayBundleEl,
     weatherDebugEl,
     weatherSpeedEl,
     weatherUpdateHzEl,
@@ -1413,8 +1487,8 @@ function getWeatherSimMode() {
 
 function getWeatherVolumeResolutionN() {
     const v = parseFloat(weatherVolumeResEl?.value);
-    const n = Number.isFinite(v) ? v : 32;
-    return clamp(Math.round(n), 32, 128);
+    const n = Number.isFinite(v) ? v : 8;
+    return clamp(Math.round(n), 1, 128);
 }
 
 function updateWaterCycleModeUi(mode) {
@@ -1508,7 +1582,24 @@ function applyWaterCycleConfig() {
         : debugKey === 'snow' ? 6
         : debugKey === 'wind' ? 7
         : 0;
-    const debugVolume = debugKey === 'volume';
+    const debugVolume = debugKey === 'volume' || debugKey === 'volume-grid';
+    volumeDebugGrid = debugKey === 'volume-grid';
+
+    let rayMin = clamp(parseFloat(weatherRayStepsMinEl?.value) || 28, 1, 128);
+    let rayMax = clamp(parseFloat(weatherRayStepsMaxEl?.value) || 48, 1, 128);
+    if (rayMin > rayMax) {
+        const swap = rayMin;
+        rayMin = rayMax;
+        rayMax = swap;
+        if (weatherRayStepsMinEl) weatherRayStepsMinEl.value = String(rayMin);
+        if (weatherRayStepsMaxEl) weatherRayStepsMaxEl.value = String(rayMax);
+    }
+    volumeRayStepsMin = rayMin;
+    volumeRayStepsMax = rayMax;
+    volumeRayBundle = clamp(parseFloat(weatherRayBundleEl?.value) || 1, 1, 100);
+    if (weatherRayBundleEl && weatherRayBundleEl.value !== String(volumeRayBundle)) {
+        weatherRayBundleEl.value = String(volumeRayBundle);
+    }
 
     const atmoThicknessKm = clamp(parseFloat(weatherAtmoThicknessEl?.value) || 20, 5, 60);
     const axialTiltDeg = clamp(parseFloat(axialTiltEl?.value) || 23.4, 0, 45);
@@ -1576,7 +1667,7 @@ function handleWaterCycleUpdate() {
     el.addEventListener(el.type === 'color' ? 'input' : 'change', handleCloudUpdate);
     if (el.type === 'range') el.addEventListener('input', handleCloudUpdate);
 });
-[waterCycleToggleEl, waterCycleCloudToggleEl, waterCycleRunEl, weatherSimModeEl, weatherVolumeResEl, weatherAtmoThicknessEl, weatherDebugEl, weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
+[waterCycleToggleEl, waterCycleCloudToggleEl, waterCycleRunEl, weatherSimModeEl, weatherVolumeResEl, weatherRayStepsMinEl, weatherRayStepsMaxEl, weatherRayBundleEl, weatherAtmoThicknessEl, weatherDebugEl, weatherSpeedEl, weatherUpdateHzEl, weatherMoistureLayersEl, weatherEvapEl, weatherPrecipEl, weatherWindEl, weatherWetnessEl, weatherOceanInertiaEl, weatherRainFxToggleEl, weatherRainFxEl, weatherRainHazeEl].forEach((el) => {
     if (!el) return;
     el.addEventListener(el.type === 'checkbox' ? 'change' : (el.type === 'color' ? 'input' : 'change'), handleWaterCycleUpdate);
     if (el.type === 'range') el.addEventListener('input', handleWaterCycleUpdate);
