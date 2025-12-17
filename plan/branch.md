@@ -19,6 +19,10 @@ recent progress:
 - TrackballControls replaced OrbitControls for overview.
 - Added mobile twinstick controls and dynamic switching.
 - Input router abstraction created.
+- SceneManager now powers renderer/scene/camera/lights in index.js (duplicate setup removed; resize handled by the module).
+- Planet generation now flows through PlanetManager (uses AtmosphereSystem/CloudSystem); render loop renders via SceneManager.update.
+- AtmosphereSystem wired to weather map + rain haze; controls update skip in Tiny mode to keep mouse/orbit input working.
+- UIManager now owns presets + settings read/write/status/hud; legacy water/atmosphere builders removed from index.js (cloud builder delegates to CloudSystem).
 
 ---
 
@@ -29,16 +33,16 @@ recent progress:
 **Problem:** The refactor that created SceneManager, PlanetManager, UIManager, AtmosphereSystem, and CloudSystem was never completed. These modules exist but **are not used** - index.js still contains ~2000+ lines of monolithic code duplicating most functionality.
 
 **Evidence:**
-- index.js does NOT import SceneManager, PlanetManager, or UIManager
-- index.js contains its own implementations of: `buildWaterMesh()`, `buildAtmosphereMesh()`, `buildCloudMesh()`, `normalizeHeightmap()`, `smoothHeightmap()`, `buildStarfield()`, `bindMobileControls()`, etc.
+- SceneManager is now imported for renderer/scene/camera/lights, and PlanetManager is used for planet/water/atmosphere/cloud generation; UIManager is partially used (presets/settings/status) but DOM refs remain in index.js.
+- Legacy builders largely removed; index.js still contains `buildWaterCycleCloudMeshVolume()` and duplicated mobile/UI wiring (`bindMobileControls()`, etc.).
 - Over 80 DOM element references defined at the top of index.js that should be in UIManager
 - The modules were created but the wiring was never completed
 
 **Refactor Target:** Complete the modular integration:
-1. Use SceneManager for renderer/scene/camera/lights/controls
-2. Use PlanetManager for planet/water/freshwater generation and management
+1. ✅ Use SceneManager for renderer/scene/camera/lights/controls
+2. ✅ Use PlanetManager for planet/water/freshwater generation and management
 3. Use UIManager for all DOM interactions and settings management
-4. Use AtmosphereSystem and CloudSystem for visual effects
+4. ✅ Use AtmosphereSystem and CloudSystem for visual effects
 5. Reduce index.js to a thin orchestration layer
 
 ---
@@ -220,6 +224,8 @@ recent progress:
 - **index.js** - Imports utils/constants, removed duplicate definitions for `clamp`, `isMobileDevice`, `nextFrame`, `sampleDataTextureRGBA`, `normalizeHeightmap`, `smoothHeightmap`
 - **PlanetManager.js** - Added imports (local fallbacks still exist)
 - **UIManager.js** - Added imports (local fallbacks still exist)
+- **SceneManager.js** - Matches runtime defaults (shadow map enabled + PCFSoft, light shadows/target, dim hemisphere light) to mirror index.js setup.
+- **index.js** - Instantiates SceneManager for renderer/scene/camera/controls/lights, drops local scene/light/starfield setup, and leaves resize handling to the module (index resize now only updates input/mobile visibility).
 
 ### Completed (2025-12-16)
 
@@ -232,8 +238,10 @@ recent progress:
 - ✅ UIManager.js: Removed local `clamp()` method, now uses import from utils.js
 - ✅ UIManager.js: Removed local `BASE_RADIUS_UNITS` and `DEFAULT_DIAMETER_KM` properties, now uses imports from constants.js
 - ✅ Browser verified: all changes work, no errors
+- ✅ index.js: Removed duplicate `presets` object, now using `PRESETS` from constants.js
+- ✅ index.js: Updated `applyPreset()` to use `PRESETS` instead of local `presets`
 
 ### Remaining Work
 
-- Continue with item #1 (module integration) - Wire SceneManager, PlanetManager, UIManager into index.js
+- Continue module integration: move DOM/state wiring into UIManager and delete legacy builders left in index.js
 - Add more constants for physics values (walkSpeed, gravity, etc.) in TinyPlanetControls

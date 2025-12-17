@@ -4,11 +4,22 @@ export class AtmosphereSystem {
     constructor(sceneGroup) {
         this.sceneGroup = sceneGroup;
         this.mesh = null;
+        const defaultTex = new THREE.DataTexture(new Uint8Array([110, 0, 128, 0]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+        defaultTex.needsUpdate = true;
+        defaultTex.wrapS = THREE.RepeatWrapping;
+        defaultTex.wrapT = THREE.ClampToEdgeWrapping;
+        defaultTex.minFilter = THREE.LinearFilter;
+        defaultTex.magFilter = THREE.LinearFilter;
+        defaultTex.generateMipmaps = false;
+        defaultTex.colorSpace = THREE.NoColorSpace;
+        this.defaultWeatherTexture = defaultTex;
         this.uniforms = {
             sunDir: { value: new THREE.Vector3(0, 1, 0) },
             glowColor: { value: new THREE.Color(0x4da8ff) },
             alpha: { value: 1.0 },
             density: { value: 6.0 },
+            weatherMap: { value: defaultTex },
+            rainHaze: { value: 0.9 },
             planetInvRot: { value: new THREE.Matrix3() },
             planetInvScale: { value: 1.0 },
             innerRadius: { value: 10.0 },
@@ -24,6 +35,17 @@ export class AtmosphereSystem {
     update(delta) {
         const scale = this.sceneGroup?.scale?.x || 1;
         this.uniforms.planetInvScale.value = scale ? (1 / scale) : 1;
+    }
+
+    setWeather(map, rainHaze = 0.9) {
+        if (!this.uniforms.weatherMap) {
+            this.uniforms.weatherMap = { value: this.defaultWeatherTexture };
+        }
+        if (!this.uniforms.rainHaze) {
+            this.uniforms.rainHaze = { value: 0.9 };
+        }
+        this.uniforms.weatherMap.value = map || this.defaultWeatherTexture;
+        this.uniforms.rainHaze.value = rainHaze;
     }
 
     // Rebuilds or updates the atmosphere mesh
@@ -71,15 +93,17 @@ export class AtmosphereSystem {
             fragmentShader: `
                 #include <common>
                 #include <logdepthbuf_pars_fragment>
-                uniform float alpha;
-                uniform float density;
-                uniform vec3 glowColor;
-                uniform vec3 sunDir;
-                uniform mat3 planetInvRot;
-                uniform float planetInvScale;
-                uniform float innerRadius;
-                uniform float outerRadius;
-                uniform float rayleighScaleHeight;
+            uniform float alpha;
+            uniform float density;
+            uniform vec3 glowColor;
+            uniform vec3 sunDir;
+            uniform sampler2D weatherMap;
+            uniform float rainHaze;
+            uniform mat3 planetInvRot;
+            uniform float planetInvScale;
+            uniform float innerRadius;
+            uniform float outerRadius;
+            uniform float rayleighScaleHeight;
                 uniform float mieScaleHeight;
                 uniform float mieG;
                 uniform float exposure;
@@ -111,17 +135,21 @@ export class AtmosphereSystem {
                 void main() {
                     #include <logdepthbuf_fragment>
 
-                    vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
-                    vec3 p1 = planetInvRot * (vWorld * planetInvScale);
-                    vec3 rd = normalize(p1 - ro);
-                    float tFrag = length(p1 - ro);
+                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
+                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
+                vec3 rd = normalize(p1 - ro);
+                float tFrag = length(p1 - ro);
 
-                    vec3 sunLocal = normalize(planetInvRot * sunDir);
+                vec3 sunLocal = normalize(planetInvRot * sunDir);
+                vec3 viewDirLocal = normalize(p1);
+                float wu = atan(viewDirLocal.z, viewDirLocal.x) / (2.0 * PI) + 0.5;
+                float wv = asin(clamp(viewDirLocal.y, -1.0, 1.0)) / PI + 0.5;
+                float rainDir = texture2D(weatherMap, vec2(wu, wv)).g;
 
-                    vec2 tOuter = raySphere(ro, rd, outerRadius);
-                    float tStart = max(tOuter.x, 0.0);
-                    float tEnd = min(tOuter.y, tFrag);
-                    if (tEnd <= tStart) discard;
+                vec2 tOuter = raySphere(ro, rd, outerRadius);
+                float tStart = max(tOuter.x, 0.0);
+                float tEnd = min(tOuter.y, tFrag);
+                if (tEnd <= tStart) discard;
 
                     vec2 tInner = raySphere(ro, rd, innerRadius);
                     if (tInner.x > 0.0) {
@@ -129,15 +157,18 @@ export class AtmosphereSystem {
                     }
                     if (tEnd <= tStart) discard;
 
-                    float atmoH = max(outerRadius - innerRadius, 1e-3);
-                    float HR = max(atmoH * rayleighScaleHeight, 1e-4);
-                    float HM = max(atmoH * mieScaleHeight, 1e-4);
+                float atmoH = max(outerRadius - innerRadius, 1e-3);
+                float HR = max(atmoH * rayleighScaleHeight, 1e-4);
+                float HM = max(atmoH * mieScaleHeight, 1e-4);
+                float rainM = clamp(rainDir * rainHaze, 0.0, 2.0);
+                HM = max(HM / (1.0 + rainM * 0.9), 1e-4); // concentrate haze near ground
 
-                    vec3 betaR = vec3(5.8e-3, 13.5e-3, 33.1e-3);
-                    betaR *= mix(vec3(0.75), glowColor, 0.85);
+                vec3 betaR = vec3(5.8e-3, 13.5e-3, 33.1e-3);
+                betaR *= mix(vec3(0.75), glowColor, 0.85);
 
-                    betaR *= density;
-                    float betaM = 21e-3 * density;
+                betaR *= density;
+                float betaM = 21e-3 * density;
+                betaM *= (1.0 + rainM * 1.35);
 
                     const int PRIMARY_STEPS = 8;
                     const int LIGHT_STEPS = 4;

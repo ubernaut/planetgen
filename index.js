@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { TinyPlanetControls } from './TinyPlanetControls.js';
-import { PlanetForge } from './worldgen.js';
+import { PlanetManager } from './PlanetManager.js';
+import { SceneManager } from './SceneManager.js';
 import { InputRouter } from './InputRouter.js';
 import { WaterCycleSystem } from './WaterCycleSystem.js';
 import { WaterCycleVolumeSystem } from './WaterCycleVolumeSystem.js';
 import { RainSystem } from './RainSystem.js';
-import { clamp, normalizeHeightmap, smoothHeightmap, isMobileDevice, nextFrame, sampleDataTextureRGBA } from './utils.js';
-import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, PRESETS, MAX_DELTA_TIME } from './constants.js';
+import { clamp, isMobileDevice, sampleDataTextureRGBA } from './utils.js';
+import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, MAX_DELTA_TIME } from './constants.js';
+import { UIManager } from './UIManager.js';
 
 const canvas = document.getElementById('viewport');
 const hudEl = document.getElementById('hud');
@@ -63,6 +64,10 @@ const cloudResolutionEl = document.getElementById('cloudResolution');
 const cloudResolutionValueEl = document.getElementById('cloudResolutionValue');
 const cloudShaderEl = document.getElementById('cloudShader');
 const cloudLayersEl = document.getElementById('cloudLayers');
+if (cloudToggleEl) {
+    // Default to volumetric/water-cycle clouds; leave the simple layer off unless user opts in.
+    cloudToggleEl.checked = false;
+}
 const addCloudLayerBtn = document.getElementById('addCloudLayer');
 const waterCycleToggleEl = document.getElementById('waterCycleToggle');
 const waterCycleCloudToggleEl = document.getElementById('waterCycleCloudToggle');
@@ -265,25 +270,42 @@ function updateVolumeDebugSprite() {
 
 // isMobileDevice now imported from utils.js
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, canvas, logarithmicDepthBuffer: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x05070f);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x05070f);
-scene.fog = new THREE.Fog(0x05070f, 30, 120);
-const planetGroup = new THREE.Group();
-scene.add(planetGroup);
+const ui = new UIManager({
+    onRegen: () => queueAutoRegen(),
+    onPreset: (key) => {
+        ui.applyPreset(key);
+        ui.setStatus('Preset applied. Regenerating…');
+        queueAutoRegen();
+    },
+    onDiameterChange: (km) => handleDiameterChange(km),
+    onAtmosphereUpdate: () => handleAtmosphereUpdate(),
+    onCloudUpdate: () => handleCloudUpdate(),
+    onVRToggle: () => {
+        if (xrSession) stopVR();
+        else startVR();
+    }
+});
+let sceneManager;
+try {
+    sceneManager = new SceneManager(canvas);
+} catch (err) {
+    console.error('WebGL init failed', err);
+    ui.setStatus('WebGL context could not be created. Enable WebGL/hardware acceleration or disable XR emulation.');
+    throw err;
+}
+const renderer = sceneManager.renderer;
+const scene = sceneManager.scene;
+const planetGroup = sceneManager.planetGroup;
+const userGroup = sceneManager.userGroup;
+const camera = sceneManager.camera;
+const controls = sceneManager.controls;
+const dirLight = sceneManager.dirLight;
+const planetManager = new PlanetManager(sceneManager);
 let moon = null;
 let moonOrbitPhase = 0;
 const moonUniforms = {
     sunDir: { value: new THREE.Vector3(0, 1, 0) }
 };
-let landingMarker = null;
 function rebuildMoon() {
     if (moon) {
         scene.remove(moon);
@@ -331,49 +353,22 @@ function rebuildMoon() {
     scene.add(moon);
 }
 
-const userGroup = new THREE.Group();
-scene.add(userGroup);
-
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
-userGroup.add(camera);
-camera.position.set(0, 10, 28);
-
-const controls = new TrackballControls(camera, renderer.domElement);
-controls.rotateSpeed = 1.0;
-controls.zoomSpeed = 1.2;
-controls.panSpeed = 0.8;
-controls.dynamicDampingFactor = 0.15;
-controls.noPan = true;
-controls.minDistance = 12;
-controls.maxDistance = 60;
-
 const input = new InputRouter();
 input.setMode(isMobileDevice() ? 'mobile' : 'desktop');
 input.setLookMode('orbit');
 
 const tinyControls = new TinyPlanetControls(camera, renderer.domElement, scene, () => {
     controls.enabled = true;
-    setStatus('');
-    if (savedOrbitState) {
-        controls.target.copy(savedOrbitState.target);
-        camera.position.copy(savedOrbitState.position);
-        savedOrbitState = null;
-    }
-    updateOrbitBounds();
-    input.setLookMode('orbit');
-}, input);
+    ui.setStatus('');
+                if (savedOrbitState) {
+                    controls.target.copy(savedOrbitState.target);
+                    camera.position.copy(savedOrbitState.position);
+                    savedOrbitState = null;
+                }
+                updateOrbitBounds();
+                input.setLookMode('orbit');
+            }, input);
 const clock = new THREE.Clock();
-
-scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.0009));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
-dirLight.position.set(12, 16, 10);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.set(2048, 2048);
-dirLight.shadow.camera.near = 1;
-dirLight.shadow.camera.far = 200;
-scene.add(dirLight);
-
-scene.add(buildStarfield());
 
 let planet = null;
 let generating = false;
@@ -383,7 +378,7 @@ let freshwater = null;
 let atmosphere = null;
 let clouds = [];
 let waterCycleCloud = null;
-let cloudLayerSettings = [];
+let cloudLayerSettings = planetManager.cloudLayerSettings;
 let lastPlanetSettings = null;
 let waterCycleSystem = null;
 let waterCycleSystem2D = null;
@@ -454,7 +449,7 @@ window.addEventListener('mousedown', (event) => {
                 const point = intersects[0].point;
                 tinyControls.enter(point, planet, camera);
                 controls.enabled = false;
-                setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
+                ui.setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
             }
         }
     }
@@ -477,91 +472,10 @@ function handleSurfaceAction() {
     // Use the same entry path as middle-click so orientation matches.
     tinyControls.enter(hit[0].point, planet, camera);
     controls.enabled = false;
-    setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
+    ui.setStatus('Mode: Tiny Planet Explorer (ESC to exit)');
 }
 
-const presets = {
-    fast: {
-        resolution: 384,
-        numPlates: 9,
-        jitter: 0.6,
-        iterations: 80000,
-        erosionRate: 0.36,
-        evaporation: 0.5,
-        radius: 10,
-        heightScale: 18.2,
-        seaLevel: 0.53,
-        smoothPasses: 20,
-        subdivisions: 16,
-        iceCap: 0.15,
-        plateDelta: 1.25,
-        plateSizeVariance: 0.35,
-        desymmetrizeTiling: true,
-        atmosphere: 0.35,
-        atmosphereHeight: 0.5,
-        atmosphereAlpha: 1.0,
-        atmosphereColor: '#4da8ff',
-        faultType: 'ridge'
-    },
-    balanced: {
-        resolution: 384,
-        numPlates: 9,
-        jitter: 0.6,
-        iterations: 80000,
-        erosionRate: 0.36,
-        evaporation: 0.5,
-        radius: 10,
-        heightScale: 18.2,
-        seaLevel: 0.53,
-        smoothPasses: 20,
-        subdivisions: 16,
-        iceCap: 0.12,
-        plateDelta: 1.25,
-        plateSizeVariance: 0.35,
-        desymmetrizeTiling: true,
-        atmosphere: 0.35,
-        atmosphereHeight: 0.5,
-        atmosphereAlpha: 1.0,
-        atmosphereColor: '#4da8ff',
-        faultType: 'mixed'
-    },
-    high: {
-        resolution: 384,
-        numPlates: 9,
-        jitter: 0.6,
-        iterations: 80000,
-        erosionRate: 0.36,
-        evaporation: 0.5,
-        radius: 10,
-        heightScale: 18.2,
-        seaLevel: 0.53,
-        smoothPasses: 20,
-        subdivisions: 128,
-        iceCap: 0.15,
-        plateDelta: 1.25,
-        plateSizeVariance: 0.45,
-        desymmetrizeTiling: true,
-        atmosphere: 0.35,
-        atmosphereHeight: 0.5,
-        atmosphereAlpha: 1.0,
-        atmosphereColor: '#4da8ff',
-        faultType: 'ridge'
-    }
-};
-
-// nextFrame now imported from utils.js
-const setStatus = (text) => {
-    statusEl.textContent = text;
-};
-function setHudCollapsed(collapsed) {
-    if (!hudEl || !hudToggleEl || !hudContentEl) return;
-    hudEl.classList.toggle('collapsed', collapsed);
-    hudToggleEl.setAttribute('aria-expanded', (!collapsed).toString());
-    hudContentEl.setAttribute('aria-hidden', collapsed.toString());
-    hudToggleEl.textContent = collapsed ? 'Show controls' : 'Hide controls';
-}
-
-setHudCollapsed(isMobileDevice());
+ui.setHudCollapsed(isMobileDevice());
 
 function bindMobileControls() {
     if (!mobileControlsEl || !movePadEl || !lookPadEl) return;
@@ -646,38 +560,8 @@ function bindMobileControls() {
     }
 }
 
-const waterUniforms = {
-    time: { value: 0 },
-    deepColor: { value: new THREE.Color(0x08203f) },
-    shallowColor: { value: new THREE.Color(0x154f8a) },
-    opacity: { value: 0.95 },
-    fresnelPower: { value: 3.4 },
-    iceCap: { value: 0.0 },
-    iceColor: { value: new THREE.Color(0xd9f1ff) }
-};
-const atmosphereUniforms = {
-    sunDir: { value: new THREE.Vector3(0, 1, 0) },
-    glowColor: { value: new THREE.Color(0x4da8ff) },
-    alpha: { value: 1.0 },
-    density: { value: 6.0 },
-    weatherMap: { value: DEFAULT_WEATHER_TEX },
-    rainHaze: { value: 0.9 },
-    planetInvRot: { value: new THREE.Matrix3() },
-    planetInvScale: { value: 1.0 },
-    innerRadius: { value: BASE_RADIUS_UNITS },
-    outerRadius: { value: BASE_RADIUS_UNITS + 1 },
-    rayleighScaleHeight: { value: 0.25 }, // fraction of (outer-inner)
-    mieScaleHeight: { value: 0.08 }, // fraction of (outer-inner)
-    mieG: { value: 0.76 },
-    exposure: { value: 1.15 }
-};
-
-// clamp now imported from utils.js
-
 function getPlanetDiameterKm() {
-    if (!planetDiameterEl) return DEFAULT_DIAMETER_KM;
-    const value = parseFloat(planetDiameterEl.value);
-    return clamp(Number.isFinite(value) ? value : DEFAULT_DIAMETER_KM, 1, 1000);
+    return ui.getPlanetDiameterKm();
 }
 
 function getPlanetScale() {
@@ -866,8 +750,7 @@ function updateOrbitBounds() {
 }
 
 function applyPlanetScale() {
-    const scale = getPlanetScale();
-    planetGroup.scale.setScalar(scale);
+    planetManager.applyPlanetScale(getPlanetDiameterKm());
     updateOrbitBounds();
 }
 
@@ -894,121 +777,19 @@ function getWalkSpeed() {
 }
 
 function updateRangeLabels() {
-    jitterValueEl.textContent = Number(jitterEl.value).toFixed(2);
-    heightScaleValueEl.textContent = Number(heightScaleEl.value).toFixed(2);
-    erosionRateValueEl.textContent = Number(erosionRateEl.value).toFixed(2);
-    evaporationValueEl.textContent = Number(evaporationEl.value).toFixed(3);
-    seaLevelValueEl.textContent = Number(seaLevelEl.value).toFixed(2);
-    atmosphereValueEl.textContent = Number(atmosphereEl.value).toFixed(2);
-    atmosphereHeightValueEl.textContent = Number(atmosphereHeightEl.value).toFixed(2);
-    smoothPassesValueEl.textContent = Number(smoothPassesEl.value).toFixed(0);
-    subdivisionsValueEl.textContent = Number(subdivisionsEl.value).toFixed(0);
-    iceCapValueEl.textContent = Number(iceCapEl.value).toFixed(2);
-    plateDeltaValueEl.textContent = Number(plateDeltaEl.value).toFixed(2);
-    plateSizeVarianceValueEl.textContent = Number(plateSizeVarianceEl.value).toFixed(2);
-    atmosphereAlphaValueEl.textContent = Number(atmosphereAlphaEl.value).toFixed(2);
-    cloudAlphaValueEl.textContent = Number(cloudAlphaEl.value).toFixed(2);
-    cloudSpeedValueEl.textContent = Number(cloudSpeedEl.value).toFixed(2);
-    cloudQuantityValueEl.textContent = Number(cloudQuantityEl.value).toFixed(2);
-    cloudHeightValueEl.textContent = Number(cloudHeightEl.value).toFixed(2);
-    cloudResolutionValueEl.textContent = Number(cloudResolutionEl.value).toFixed(0);
-    if (weatherSpeedEl && weatherSpeedValueEl) weatherSpeedValueEl.textContent = Number(weatherSpeedEl.value).toFixed(0);
-    if (weatherUpdateHzEl && weatherUpdateHzValueEl) weatherUpdateHzValueEl.textContent = Number(weatherUpdateHzEl.value).toFixed(0);
-    if (weatherVolumeResEl && weatherVolumeResValueEl) weatherVolumeResValueEl.textContent = Number(weatherVolumeResEl.value).toFixed(0);
-    if (weatherAtmoThicknessEl && weatherAtmoThicknessValueEl) weatherAtmoThicknessValueEl.textContent = Number(weatherAtmoThicknessEl.value).toFixed(0);
-    if (axialTiltEl && axialTiltValueEl) axialTiltValueEl.textContent = Number(axialTiltEl.value).toFixed(1);
-    if (seasonProgressEl && seasonProgressValueEl) seasonProgressValueEl.textContent = Number(seasonProgressEl.value).toFixed(2);
-    if (weatherMoistureLayersEl && weatherMoistureLayersValueEl) weatherMoistureLayersValueEl.textContent = Number(weatherMoistureLayersEl.value).toFixed(0);
-    if (weatherEvapEl && weatherEvapValueEl) weatherEvapValueEl.textContent = Number(weatherEvapEl.value).toFixed(2);
-    if (weatherPrecipEl && weatherPrecipValueEl) weatherPrecipValueEl.textContent = Number(weatherPrecipEl.value).toFixed(2);
-    if (weatherWindEl && weatherWindValueEl) weatherWindValueEl.textContent = Number(weatherWindEl.value).toFixed(2);
-    if (weatherWetnessEl && weatherWetnessValueEl) weatherWetnessValueEl.textContent = Number(weatherWetnessEl.value).toFixed(2);
-    if (weatherOceanInertiaEl && weatherOceanInertiaValueEl) weatherOceanInertiaValueEl.textContent = Number(weatherOceanInertiaEl.value).toFixed(2);
-    if (weatherRainFxEl && weatherRainFxValueEl) weatherRainFxValueEl.textContent = Number(weatherRainFxEl.value).toFixed(2);
-    if (weatherRainHazeEl && weatherRainHazeValueEl) weatherRainHazeValueEl.textContent = Number(weatherRainHazeEl.value).toFixed(2);
-    if (planetDiameterEl && planetDiameterValueEl) {
-        planetDiameterValueEl.textContent = Number(planetDiameterEl.value).toFixed(0);
-    }
-    if (leftStickSensitivityEl && leftStickSensitivityValueEl) leftStickSensitivityValueEl.textContent = Number(leftStickSensitivityEl.value).toFixed(1);
-    if (lookSensitivityXEl && lookSensitivityXValueEl) lookSensitivityXValueEl.textContent = Number(lookSensitivityXEl.value).toFixed(1);
-    if (lookSensitivityYEl && lookSensitivityYValueEl) lookSensitivityYValueEl.textContent = Number(lookSensitivityYEl.value).toFixed(1);
-}
-
-function markDirty() {
-    setStatus('Params changed. Regenerating…');
+    ui.updateRangeLabels();
 }
 
 function applyPreset(key) {
-    const preset = presets[key] || presets.balanced;
-    presetEl.value = key;
-    resolutionEl.value = preset.resolution;
-    platesEl.value = preset.numPlates;
-    plateSizeVarianceEl.value = preset.plateSizeVariance ?? 0.35;
-    desymmetrizeTilingEl.checked = preset.desymmetrizeTiling ?? true;
-    jitterEl.value = preset.jitter;
-    heightScaleEl.value = preset.heightScale;
-    iterationsEl.value = preset.iterations;
-    erosionRateEl.value = preset.erosionRate;
-    evaporationEl.value = preset.evaporation;
-    seaLevelEl.value = preset.seaLevel ?? 0.53;
-    atmosphereEl.value = preset.atmosphere ?? 0.35;
-    atmosphereHeightEl.value = preset.atmosphereHeight ?? 0.5;
-    atmosphereAlphaEl.value = preset.atmosphereAlpha ?? 1.0;
-    atmosphereColorEl.value = preset.atmosphereColor || '#4da8ff';
-    smoothPassesEl.value = preset.smoothPasses ?? 20;
-    subdivisionsEl.value = preset.subdivisions ?? 60;
-    iceCapEl.value = preset.iceCap ?? 0.15;
-    plateDeltaEl.value = preset.plateDelta ?? 1.25;
-    faultTypeEl.value = preset.faultType || 'ridge';
-    updateRangeLabels();
+    ui.applyPreset(key);
 }
 
 function readSettings() {
-    return {
-        resolution: clamp(parseInt(resolutionEl.value, 10) || 256, 64, 4096),
-        numPlates: clamp(parseInt(platesEl.value, 10) || 9, 4, 400),
-        plateSizeVariance: clamp(parseFloat(plateSizeVarianceEl.value) || 0, 0, 2),
-        desymmetrizeTiling: Boolean(desymmetrizeTilingEl?.checked),
-        jitter: clamp(parseFloat(jitterEl.value) || 0.5, 0, 1),
-        iterations: clamp(parseInt(iterationsEl.value, 10) || 50000, 1000, 2000000),
-        erosionRate: clamp(parseFloat(erosionRateEl.value) || 0.1, 0.001, 2),
-        evaporation: clamp(parseFloat(evaporationEl.value) || 0.02, 0, 2),
-        heightScale: clamp(parseFloat(heightScaleEl.value) || 2, 0, 80),
-        seaLevel: clamp(parseFloat(seaLevelEl.value) || 0.5, 0, 1),
-        atmosphere: clamp(parseFloat(atmosphereEl.value) || 0.35, 0.05, 1.5),
-        atmosphereHeight: clamp(parseFloat(atmosphereHeightEl.value) || 0.5, 0, 5),
-        atmosphereAlpha: clamp(parseFloat(atmosphereAlphaEl.value) || 1.0, 0, 1),
-        atmosphereColor: atmosphereColorEl.value || '#4da8ff',
-        smoothPasses: Math.round(clamp(parseFloat(smoothPassesEl.value) || 0, 0, 40)),
-        subdivisions: Math.round(clamp(parseFloat(subdivisionsEl.value) || 128, 0, 512)),
-        iceCap: clamp(parseFloat(iceCapEl.value) || 0.1, 0, 1),
-        plateDelta: clamp(parseFloat(plateDeltaEl.value) || 1.25, 0, 2),
-        faultType: faultTypeEl.value || 'ridge',
-        radius: BASE_RADIUS_UNITS
-    };
+    return ui.readSettings();
 }
 
 function writeSettings(settings) {
-    resolutionEl.value = settings.resolution;
-    platesEl.value = settings.numPlates;
-    plateSizeVarianceEl.value = settings.plateSizeVariance;
-    if (desymmetrizeTilingEl) desymmetrizeTilingEl.checked = !!settings.desymmetrizeTiling;
-    jitterEl.value = settings.jitter;
-    iterationsEl.value = settings.iterations;
-    erosionRateEl.value = settings.erosionRate;
-    evaporationEl.value = settings.evaporation;
-    heightScaleEl.value = settings.heightScale;
-    seaLevelEl.value = settings.seaLevel;
-    atmosphereEl.value = settings.atmosphere;
-    atmosphereHeightEl.value = settings.atmosphereHeight;
-    atmosphereAlphaEl.value = settings.atmosphereAlpha;
-    atmosphereColorEl.value = settings.atmosphereColor;
-    smoothPassesEl.value = settings.smoothPasses;
-    subdivisionsEl.value = settings.subdivisions;
-    iceCapEl.value = settings.iceCap;
-    plateDeltaEl.value = settings.plateDelta;
-    faultTypeEl.value = settings.faultType;
-    updateRangeLabels();
+    ui.writeSettings(settings);
 }
 
 async function generateWorld(presetKey) {
@@ -1041,75 +822,49 @@ async function generateWorld(presetKey) {
     iceCapEl.disabled = true;
     atmosphereHeightEl.disabled = true;
 
-    const settings = readSettings();
+    const settings = {
+        ...readSettings(),
+        planetDiameterKm: getPlanetDiameterKm(),
+        atmosphereEnabled: atmosphereToggleEl?.checked ?? true
+    };
     writeSettings(settings); // ensure UI reflects clamped values
 
+    // Sync cloud layers to PlanetManager before generation
+    const layers = [];
+    const baseLayer = getBaseCloudSettings();
+    if (baseLayer.enabled) layers.push(baseLayer);
+    for (const layer of cloudLayerSettings) {
+        if (layer.enabled) layers.push(layer);
+    }
+    planetManager.cloudLayerSettings = layers;
+
     try {
-        setStatus(`Tectonics: ${settings.numPlates} plates`);
-        await nextFrame();
+        await planetManager.generate(settings, (msg) => ui.setStatus(msg));
+        lastPlanetSettings = { ...(planetManager.lastSettings || settings) };
+        planet = planetManager.planet;
+        water = planetManager.water;
+        freshwater = planetManager.freshwater;
+        atmosphere = planetManager.atmosphereSystem?.mesh || null;
+        clouds = planetManager.cloudSystem?.clouds || [];
 
-        const forge = new PlanetForge(settings.resolution);
-        forge.generateTectonics({
-            numPlates: settings.numPlates,
-            jitter: settings.jitter,
-            oceanFloor: 0.2,
-            plateDelta: settings.plateDelta,
-            faultType: settings.faultType,
-            plateSizeVariance: settings.plateSizeVariance,
-            desymmetrizeTiling: settings.desymmetrizeTiling
-        });
+        if (planetManager.forge) {
+            syncWaterCycleSurfaceFromForge(planetManager.forge, settings);
+        }
 
-        setStatus(`Erosion: ${settings.iterations.toLocaleString()} droplets`);
-        await nextFrame();
-
-        forge.applyErosion({
-            iterations: settings.iterations,
-            erosionRate: settings.erosionRate,
-            evaporation: settings.evaporation
-        });
-
-        normalizeHeightmap(forge.data);
-        smoothHeightmap(forge.data, forge.size, settings.smoothPasses);
-        forge.applyHydrology({ seaLevel: settings.seaLevel, riverDepth: 0.015, lakeThreshold: 0.003 });
-
-        setStatus('Meshing planet…');
-        await nextFrame();
-
-        lastPlanetSettings = { ...settings, planetDiameterKm: getPlanetDiameterKm() };
-        syncWaterCycleSurfaceFromForge(forge, lastPlanetSettings);
-        const mesh = forge.createMesh(
-            settings.radius,
-            settings.heightScale,
-            settings.seaLevel,
-            settings.subdivisions,
-            settings.iceCap,
-            getWeatherTexture(),
-            getWeatherAuxTexture()
-        );
-        mesh.userData.forge = forge;
-        mesh.userData.settings = settings;
-        mesh.rotation.x = 0.25;
-        replacePlanet(mesh);
         setPlanetWeatherTexture(getWeatherTexture());
         setPlanetWeatherAuxTexture(getWeatherAuxTexture());
         applyWaterCycleConfig();
-        replaceWater(buildWaterMesh(settings.radius, settings.subdivisions, settings.seaLevel, settings.heightScale, settings.iceCap));
-        replaceFreshwater(forge.createFreshwaterMesh(settings.radius, settings.heightScale, settings.seaLevel, settings.subdivisions));
+
         const sunDir = new THREE.Vector3().copy(dirLight.position).normalize();
-        if (atmosphereToggleEl.checked) {
-            replaceAtmosphere(buildAtmosphereMesh(settings.radius, settings.subdivisions, settings.heightScale, settings.atmosphereHeight, settings.atmosphere, sunDir, settings.atmosphereAlpha, settings.atmosphereColor));
-        } else if (atmosphere) {
-            atmosphere.visible = false;
-        }
         rebuildClouds(sunDir);
         rebuildWaterCycleClouds(sunDir);
         rebuildMoon();
         applyPlanetScale();
 
-        setStatus(`${settings.resolution}² map · ${settings.iterations.toLocaleString()} steps`);
+        ui.setStatus(`${settings.resolution}² map · ${settings.iterations.toLocaleString()} steps`);
     } catch (err) {
         console.error(err);
-        setStatus('Generation failed – check console');
+        ui.setStatus('Generation failed – check console');
     } finally {
         generating = false;
         regenBtn.disabled = false;
@@ -1132,813 +887,16 @@ async function generateWorld(presetKey) {
     }
 }
 
-function replacePlanet(mesh) {
-    if (planet) {
-        planet.geometry.dispose();
-        if (Array.isArray(planet.material)) {
-            planet.material.forEach((m) => m.dispose?.());
-        } else {
-            planet.material.dispose?.();
-        }
-        planetGroup.remove(planet);
-    }
-    planet = mesh;
-    planetGroup.add(mesh);
-}
-
-function replaceWater(mesh) {
-    if (water) {
-        water.geometry.dispose();
-        if (Array.isArray(water.material)) {
-            water.material.forEach((m) => m.dispose?.());
-        } else {
-            water.material.dispose?.();
-        }
-        planetGroup.remove(water);
-    }
-    water = mesh;
-    planetGroup.add(mesh);
-}
-
-function replaceFreshwater(mesh) {
-    if (freshwater) {
-        freshwater.geometry.dispose();
-        freshwater.material.dispose?.();
-        if (freshwater.parent) freshwater.parent.remove(freshwater);
-    }
-    freshwater = mesh;
-    freshwater.renderOrder = 1;
-    if (planet) {
-        planet.add(mesh);
-    } else {
-        planetGroup.add(mesh);
-    }
-}
-
-function replaceAtmosphere(mesh) {
-    if (atmosphere) {
-        atmosphere.geometry.dispose();
-        atmosphere.material.dispose?.();
-        planetGroup.remove(atmosphere);
-    }
-    atmosphere = mesh;
-    // Draw before clouds so scattering doesn't wash out volumetric clouds (clouds don't write depth).
-    atmosphere.renderOrder = 1;
-    planetGroup.add(mesh);
-}
-
-function replaceClouds(mesh) {
-    if (clouds) {
-        clouds.geometry.dispose();
-        clouds.material.dispose?.();
-        planetGroup.remove(clouds);
-    }
-    clouds = mesh;
-    planetGroup.add(mesh);
-}
-
-function buildStarfield() {
-    const starCount = 1200;
-    const positions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-        const r = 90 + Math.random() * 60;
-        const theta = Math.random() * Math.PI * 2;
-        const u = Math.random() * 2 - 1;
-        const phi = Math.acos(u);
-        const sinPhi = Math.sin(phi);
-
-        positions[i * 3] = r * sinPhi * Math.cos(theta);
-        positions[i * 3 + 1] = r * Math.cos(phi);
-        positions[i * 3 + 2] = r * sinPhi * Math.sin(theta);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
-        color: 0x7dd3fc,
-        size: 0.5,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.7
-    });
-    return new THREE.Points(geometry, material);
-}
-
-function buildWaterMesh(radius, subdivisions, seaLevel, heightScale, iceCap) {
-    const waterRadius = radius + ((seaLevel - 0.5) * heightScale) + 0.01; // align to slider, tiny lift to avoid z-fight
-    const geometry = new THREE.IcosahedronGeometry(waterRadius, Math.max(0, Math.floor(subdivisions)));
-    waterUniforms.iceCap.value = iceCap ?? 0;
-    const material = new THREE.ShaderMaterial({
-        uniforms: waterUniforms,
-        transparent: true,
-        depthWrite: true,
-        side: THREE.FrontSide,
-        blending: THREE.NormalBlending,
-        vertexShader: `
-            #include <common>
-            #include <logdepthbuf_pars_vertex>
-            uniform float time;
-            varying vec3 vWorldPos;
-            varying vec3 vNormal;
-            void main() {
-                vec3 pos = position;
-                float wave = sin((pos.x + pos.z) * 0.35 + time * 0.6) * 0.02;
-                pos += normalize(normal) * wave;
-                vec4 worldPos = modelMatrix * vec4(pos, 1.0);
-                vWorldPos = worldPos.xyz;
-                vNormal = normalize(normalMatrix * normalize(pos));
-                vec4 mvPosition = viewMatrix * worldPos;
-                gl_Position = projectionMatrix * mvPosition;
-                #include <logdepthbuf_vertex>
-            }
-        `,
-        fragmentShader: `
-            #include <common>
-            #include <logdepthbuf_pars_fragment>
-            uniform vec3 deepColor;
-            uniform vec3 shallowColor;
-            uniform float opacity;
-            uniform float fresnelPower;
-            uniform float iceCap;
-            uniform vec3 iceColor;
-            varying vec3 vWorldPos;
-            varying vec3 vNormal;
-            void main() {
-                #include <logdepthbuf_fragment>
-                vec3 viewDir = normalize(cameraPosition - vWorldPos);
-                float fresnel = pow(1.0 - max(dot(viewDir, normalize(vNormal)), 0.0), fresnelPower);
-                vec3 base = mix(shallowColor, deepColor, fresnel);
-                float sparkle = pow(fresnel, 4.0) * 0.3;
-                float pole = abs(normalize(vWorldPos).y);
-                float start = clamp(1.0 - iceCap, 0.0, 1.0);
-                float iceMask = smoothstep(start, start + 0.08, pole);
-                vec3 color = mix(base + sparkle, iceColor, iceMask);
-                gl_FragColor = vec4(color, opacity);
-            }
-        `
-    });
-    return new THREE.Mesh(geometry, material);
-}
-
-
-function buildAtmosphereMesh(radius, subdivisions, heightScale, heightOffset, thickness, sunDir, alpha, colorHex) {
-    const outerRadius = radius + heightOffset + Math.max(0.05, thickness) * heightScale;
-    atmosphereUniforms.alpha.value = alpha;
-    atmosphereUniforms.glowColor.value = new THREE.Color(colorHex);
-    atmosphereUniforms.sunDir.value = sunDir.clone().normalize();
-    atmosphereUniforms.innerRadius.value = radius;
-    atmosphereUniforms.outerRadius.value = outerRadius;
-
-    const detail = Math.max(2, Math.min(6, Math.floor(subdivisions / 24)));
-    const geometry = new THREE.IcosahedronGeometry(outerRadius, detail);
-    const material = new THREE.ShaderMaterial({
-        uniforms: atmosphereUniforms,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
-        vertexShader: `
-            #include <common>
-            #include <logdepthbuf_pars_vertex>
-            varying vec3 vWorld;
-            void main() {
-                vec4 worldPos = modelMatrix * vec4(position, 1.0);
-                vWorld = worldPos.xyz;
-                gl_Position = projectionMatrix * viewMatrix * worldPos;
-                #include <logdepthbuf_vertex>
-            }
-        `,
-        fragmentShader: `
-            #include <common>
-            #include <logdepthbuf_pars_fragment>
-            uniform float alpha;
-            uniform float density;
-            uniform vec3 glowColor;
-            uniform vec3 sunDir;
-            uniform sampler2D weatherMap;
-            uniform float rainHaze;
-            uniform mat3 planetInvRot;
-            uniform float planetInvScale;
-            uniform float innerRadius;
-            uniform float outerRadius;
-            uniform float rayleighScaleHeight;
-            uniform float mieScaleHeight;
-            uniform float mieG;
-            uniform float exposure;
-            varying vec3 vWorld;
-
-            vec2 raySphere(vec3 ro, vec3 rd, float r) {
-                float b = dot(ro, rd);
-                float c = dot(ro, ro) - r * r;
-                float h = b * b - c;
-                if (h < 0.0) return vec2(1e9, -1e9);
-                h = sqrt(h);
-                return vec2(-b - h, -b + h);
-            }
-
-            float phaseRayleigh(float mu) {
-                return 3.0 / (16.0 * PI) * (1.0 + mu * mu);
-            }
-
-            float phaseMie(float mu, float g) {
-                float g2 = g * g;
-                float denom = pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
-                return (1.0 - g2) / (4.0 * PI * denom);
-            }
-
-            vec3 exp3(vec3 v) {
-                return vec3(exp(-v.x), exp(-v.y), exp(-v.z));
-            }
-
-            void main() {
-                #include <logdepthbuf_fragment>
-
-                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
-                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
-                vec3 rd = normalize(p1 - ro);
-                float tFrag = length(p1 - ro);
-
-                vec3 sunLocal = normalize(planetInvRot * sunDir);
-                vec3 viewDirLocal = normalize(p1);
-                float wu = atan(viewDirLocal.z, viewDirLocal.x) / (2.0 * PI) + 0.5;
-                float wv = asin(clamp(viewDirLocal.y, -1.0, 1.0)) / PI + 0.5;
-                float rainDir = texture2D(weatherMap, vec2(wu, wv)).g;
-
-                vec2 tOuter = raySphere(ro, rd, outerRadius);
-                float tStart = max(tOuter.x, 0.0);
-                float tEnd = min(tOuter.y, tFrag);
-                if (tEnd <= tStart) discard;
-
-                vec2 tInner = raySphere(ro, rd, innerRadius);
-                if (tInner.x > 0.0) {
-                    tEnd = min(tEnd, tInner.x);
-                }
-                if (tEnd <= tStart) discard;
-
-                float atmoH = max(outerRadius - innerRadius, 1e-3);
-                float HR = max(atmoH * rayleighScaleHeight, 1e-4);
-                float HM = max(atmoH * mieScaleHeight, 1e-4);
-                float rainM = clamp(rainDir * rainHaze, 0.0, 2.0);
-                HM = max(HM / (1.0 + rainM * 0.9), 1e-4); // concentrate haze near ground
-
-                // Wavelength-weighted Rayleigh coefficients (scaled for our unit system)
-                vec3 betaR = vec3(5.8e-3, 13.5e-3, 33.1e-3);
-                // Use glowColor as a tint/bias for Rayleigh (keeps UI meaningful)
-                betaR *= mix(vec3(0.75), glowColor, 0.85);
-
-                betaR *= density;
-                float betaM = 21e-3 * density;
-                betaM *= (1.0 + rainM * 1.35);
-
-                const int PRIMARY_STEPS = 8;
-                const int LIGHT_STEPS = 4;
-
-                float segLen = (tEnd - tStart) / float(PRIMARY_STEPS);
-                float optR = 0.0;
-                float optM = 0.0;
-                vec3 sumR = vec3(0.0);
-                vec3 sumM = vec3(0.0);
-
-                for (int i = 0; i < PRIMARY_STEPS; i++) {
-                    float t = tStart + (float(i) + 0.5) * segLen;
-                    vec3 pos = ro + rd * t;
-                    float height = max(length(pos) - innerRadius, 0.0);
-                    float dR = exp(-height / HR);
-                    float dM = exp(-height / HM);
-
-                    optR += dR * segLen;
-                    optM += dM * segLen;
-
-                    vec2 tSunOuter = raySphere(pos, sunLocal, outerRadius);
-                    float tSunEnd = tSunOuter.y;
-                    if (tSunEnd <= 0.0) continue;
-
-                    vec2 tSunInner = raySphere(pos, sunLocal, innerRadius);
-                    float shadow = 1.0;
-                    if (tSunInner.x > 0.0 && tSunInner.x < tSunEnd) {
-                        shadow = 0.0;
-                    }
-
-                    float segL = tSunEnd / float(LIGHT_STEPS);
-                    float optSunR = 0.0;
-                    float optSunM = 0.0;
-                    for (int j = 0; j < LIGHT_STEPS; j++) {
-                        float tl = (float(j) + 0.5) * segL;
-                        vec3 pl = pos + sunLocal * tl;
-                        float hL = max(length(pl) - innerRadius, 0.0);
-                        optSunR += exp(-hL / HR) * segL;
-                        optSunM += exp(-hL / HM) * segL;
-                    }
-
-                    vec3 tau = betaR * (optR + optSunR) + vec3(betaM * (optM + optSunM));
-                    vec3 trans = exp3(tau);
-                    trans *= shadow;
-
-                    sumR += trans * dR * segLen;
-                    sumM += trans * dM * segLen;
-                }
-
-                float mu = dot(rd, sunLocal);
-                float pR = phaseRayleigh(mu);
-                float pM = phaseMie(mu, mieG);
-
-                vec3 radiance = (betaR * sumR * pR + vec3(betaM) * sumM * pM) * 18.0;
-                radiance = vec3(1.0) - exp(-radiance * exposure);
-                radiance *= alpha;
-
-                float lum = max(radiance.r, max(radiance.g, radiance.b));
-                if (lum < 0.002) discard;
-
-                gl_FragColor = vec4(radiance, 1.0);
-            }
-        `
-    });
-    return new THREE.Mesh(geometry, material);
-}
-
 function buildCloudMesh(radius, baseSubdivisions, sunDir, planetRadius, seaLevel, heightScale, settings) {
-    const baseRadius = Math.max(0.1, radius + settings.height);
-    const halfThickness = Math.max(0.25, heightScale * 0.03);
-    const minInner = planetRadius + ((seaLevel - 0.5) * heightScale) + 0.05;
-    const innerRadius = Math.max(minInner, baseRadius - halfThickness);
-    // Keep cloud shell thickness stable even when the layer is clamped above the surface.
-    const outerRadius = innerRadius + (2.0 * halfThickness);
-
-    const modeId = settings.mode === 'billow' ? 1 : settings.mode === 'cellular' ? 2 : 0;
-    const uniforms = {
-        windOffset: { value: 0 },
-        color: { value: new THREE.Color(settings.color) },
-        opacity: { value: settings.alpha },
-        sunDir: { value: sunDir.clone().normalize() }, // world-space; converted in shader via planetInvRot
-        windDir: { value: new THREE.Vector3(0, 0, 1) },
-        quantity: { value: settings.quantity },
-        noiseScale: { value: Math.max(1, settings.resolution) },
-        mode: { value: modeId },
-        weatherMap: { value: getWeatherTexture() },
-        weatherAuxMap: { value: getWeatherAuxTexture() },
-        planetInvRot: { value: new THREE.Matrix3() },
-        planetInvScale: { value: 1.0 },
-        innerRadius: { value: innerRadius },
-        outerRadius: { value: outerRadius }
-    };
-
-    const detail = Math.max(2, Math.min(6, Math.floor(baseSubdivisions / 24)));
-    const geometry = new THREE.IcosahedronGeometry(outerRadius, detail);
-    const material = new THREE.ShaderMaterial({
-        uniforms,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.NormalBlending,
-        vertexShader: `
-            #include <common>
-            #include <logdepthbuf_pars_vertex>
-            varying vec3 vWorld;
-            void main() {
-                vec4 worldPos = modelMatrix * vec4(position, 1.0);
-                vWorld = worldPos.xyz;
-                gl_Position = projectionMatrix * viewMatrix * worldPos;
-                #include <logdepthbuf_vertex>
-            }
-        `,
-        fragmentShader: `
-            #include <common>
-            #include <logdepthbuf_pars_fragment>
-            uniform vec3 color;
-            uniform float opacity;
-            uniform float windOffset;
-            uniform vec3 sunDir;
-            uniform vec3 windDir;
-            uniform float quantity;
-            uniform float noiseScale;
-            uniform float mode;
-            uniform sampler2D weatherMap;
-            uniform sampler2D weatherAuxMap;
-            uniform mat3 planetInvRot;
-            uniform float planetInvScale;
-            uniform float innerRadius;
-            uniform float outerRadius;
-            varying vec3 vWorld;
-
-            float hash(vec3 p) {
-                p = fract(p * 0.3183099 + vec3(0.1,0.2,0.3));
-                p *= 17.0;
-                return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-            }
-            float noise(vec3 p) {
-                vec3 i = floor(p);
-                vec3 f = fract(p);
-                f = f*f*(3.0-2.0*f);
-                float n000 = hash(i + vec3(0,0,0));
-                float n100 = hash(i + vec3(1,0,0));
-                float n010 = hash(i + vec3(0,1,0));
-                float n110 = hash(i + vec3(1,1,0));
-                float n001 = hash(i + vec3(0,0,1));
-                float n101 = hash(i + vec3(1,0,1));
-                float n011 = hash(i + vec3(0,1,1));
-                float n111 = hash(i + vec3(1,1,1));
-                float nx00 = mix(n000, n100, f.x);
-                float nx10 = mix(n010, n110, f.x);
-                float nx01 = mix(n001, n101, f.x);
-                float nx11 = mix(n011, n111, f.x);
-                float nxy0 = mix(nx00, nx10, f.y);
-                float nxy1 = mix(nx01, nx11, f.y);
-                return mix(nxy0, nxy1, f.z);
-            }
-            float fbm(vec3 p) {
-                float sum = 0.0;
-                float amp = 0.55;
-                for(int i=0;i<4;i++){
-                    sum += noise(p) * amp;
-                    p *= 2.1;
-                    amp *= 0.5;
-                }
-                return sum;
-            }
-
-            float densityAt(vec3 pos, out float rainOut) {
-                float r = length(pos);
-                if (r < innerRadius || r > outerRadius) { rainOut = 0.0; return 0.0; }
-                float h = (r - innerRadius) / max(outerRadius - innerRadius, 1e-3);
-                float profile = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.55, 1.0, h));
-
-                vec3 dir = pos / max(r, 1e-6);
-                float u = atan(dir.z, dir.x) / (2.0 * 3.14159265) + 0.5;
-                float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265 + 0.5;
-                vec4 w = texture2D(weatherMap, vec2(u, v));
-                vec4 wa = texture2D(weatherAuxMap, vec2(u, v));
-                float cloud = w.r;
-                float rain = w.g;
-                rainOut = rain;
-
-                float cover = cloud * (0.45 + quantity * 1.1);
-
-                float freq = max(1.0, noiseScale) * 0.003;
-                vec2 windUV = (wa.ba - 0.5) * 2.0;
-                vec3 east = vec3(-dir.z, 0.0, dir.x);
-                float el = length(east);
-                east = (el < 1e-5) ? vec3(1.0, 0.0, 0.0) : (east / el);
-                vec3 north = normalize(cross(dir, east));
-                vec3 windVec = east * windUV.x + north * windUV.y;
-                float wMag = clamp(length(windUV), 0.0, 1.0);
-                vec3 advDir = normalize(mix(windDir, windVec, 0.75));
-                vec3 np = pos * freq + advDir * (windOffset * (0.35 + 1.05 * wMag));
-                float n = fbm(np);
-                if (mode > 0.5 && mode < 1.5) {
-                    n = abs(n) * 2.0 - 1.0;
-                } else if (mode > 1.5) {
-                    vec3 q = floor(np * 0.9);
-                    float c = fract(sin(dot(q, vec3(12.9898,78.233,45.164))) * 43758.5453);
-                    n = mix(n, c * 2.0 - 1.0, 0.55);
-                }
-                float detail = smoothstep(0.15, 0.75, n + 0.2);
-                float d = cover * profile * detail;
-                d *= mix(1.0, 1.25, rain);
-                return d;
-            }
-
-            vec2 raySphere(vec3 ro, vec3 rd, float r) {
-                float b = dot(ro, rd);
-                float c = dot(ro, ro) - r * r;
-                float h = b*b - c;
-                if (h < 0.0) return vec2(1e9, -1e9);
-                h = sqrt(h);
-                return vec2(-b - h, -b + h);
-            }
-
-            void main() {
-                #include <logdepthbuf_fragment>
-
-                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
-                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
-                vec3 rd = normalize(p1 - ro);
-
-                vec2 tOuter = raySphere(ro, rd, outerRadius);
-                float tStart = max(tOuter.x, 0.0);
-                float tEnd = tOuter.y;
-                if (tEnd <= tStart) discard;
-
-                vec2 tInner = raySphere(ro, rd, innerRadius);
-                // Clip marching segment to the cloud shell so step sizes stay stable from orbit.
-                if (tInner.x <= tInner.y) {
-                    if (tInner.x > 0.0) tEnd = min(tEnd, tInner.x);
-                    else if (tInner.y > 0.0) tStart = max(tStart, tInner.y);
-                }
-                if (tEnd <= tStart) discard;
-
-                const int STEPS = 26;
-                float stepSize = (tEnd - tStart) / float(STEPS);
-                vec3 sum = vec3(0.0);
-                float alpha = 0.0;
-
-                vec3 sunLocal = normalize(planetInvRot * sunDir);
-
-                for (int i = 0; i < STEPS; i++) {
-                    float t = tStart + (float(i) + 0.5) * stepSize;
-                    vec3 pos = ro + rd * t;
-
-                    float rainNow = 0.0;
-                    float d = densityAt(pos, rainNow);
-                    if (d <= 1e-4) continue;
-
-                    float day = clamp(dot(normalize(pos), sunLocal), 0.0, 1.0);
-                    float light = mix(0.55, 1.15, day);
-                    vec3 ccol = mix(color, color * 0.85, rainNow) * light;
-
-                    float a = 1.0 - exp(-d * stepSize * 4.5);
-                    sum += (1.0 - alpha) * ccol * a;
-                    alpha += (1.0 - alpha) * a;
-                    if (alpha > 0.985) break;
-                }
-
-                alpha *= opacity;
-                if (alpha < 0.01) discard;
-                gl_FragColor = vec4(sum, alpha);
-            }
-        `
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.uniforms = uniforms;
-    mesh.userData.settings = settings;
-    mesh.renderOrder = 2;
-    return mesh;
-}
-
-function clearWaterCycleCloudMesh() {
-    if (!waterCycleCloud) return;
-    planetGroup.remove(waterCycleCloud);
-    waterCycleCloud.geometry.dispose();
-    waterCycleCloud.material.dispose?.();
-    waterCycleCloud = null;
-}
-
-function getWaterCycleCloudSettings() {
-    return {
-        id: 'watercycle',
-        enabled: (waterCycleCloudToggleEl?.checked ?? true),
-        alpha: clamp(parseFloat(cloudAlphaEl?.value) || 0.74, 0, 1),
-        speed: clamp(parseFloat(cloudSpeedEl?.value) || 0.9, 0, 2),
-        quantity: clamp(parseFloat(cloudQuantityEl?.value) || 0.76, 0, 1),
-        height: clamp(parseFloat(cloudHeightEl?.value) || -2.4, -5, 5),
-        color: cloudColorEl?.value || '#ffffff',
-        resolution: Math.max(1, Math.floor(parseFloat(cloudResolutionEl?.value) || 256)),
-        mode: cloudShaderEl?.value || 'billow'
-    };
-}
-
-function buildWaterCycleCloudMeshVolume(radius, baseSubdivisions, sunDir, planetRadius, seaLevel, heightScale, settings, volumeTex, volumeMeta) {
-    const modeId = settings.mode === 'billow' ? 1 : settings.mode === 'cellular' ? 2 : 0;
-
-    const surfaceRadius = planetRadius + ((seaLevel - 0.5) * heightScale) + 0.05;
-    const metersPerUnit = ((volumeMeta?.planetRadiusM ?? DEFAULT_RADIUS_M) / BASE_RADIUS_UNITS);
-    const atmoUnits = ((volumeMeta?.atmoThicknessM ?? 20_000) / Math.max(metersPerUnit, 1e-6));
-    // Tie the inner cloud shell to the actual surface so clouds can extend to ground/sea.
-    const baseRadius = surfaceRadius;
-    const halfThickness = Math.max(0.25, atmoUnits * 0.5);
-    // Let clouds hug the surface/ocean: bring inner shell slightly below surfaceRadius.
-    const innerRadius = Math.max(0.1, baseRadius - 0.05);
-    const outerRadius = innerRadius + (2.0 * halfThickness);
-
-    const uniforms = {
-        windOffset: { value: 0 },
-        color: { value: new THREE.Color(settings.color) },
-        opacity: { value: settings.alpha },
-        sunDir: { value: sunDir.clone().normalize() },
-        windDir: { value: new THREE.Vector3(0, 0, 1) },
-        quantity: { value: settings.quantity },
-        noiseScale: { value: Math.max(1, settings.resolution) },
-        mode: { value: modeId },
-        volumeAtlas: { value: volumeTex },
-        volumeN: { value: volumeMeta?.n ?? 64 },
-        tilesX: { value: volumeMeta?.tilesX ?? 8 },
-        atlasW: { value: volumeMeta?.atlasW ?? 512 },
-        atlasH: { value: volumeMeta?.atlasH ?? 512 },
-        volumeExtentM: { value: volumeMeta?.extentM ?? 520_000 },
-        metersPerUnit: { value: metersPerUnit },
-        planetInvRot: { value: new THREE.Matrix3() },
-        planetInvScale: { value: 1.0 },
-        innerRadius: { value: innerRadius },
-        outerRadius: { value: outerRadius }
-    };
-
-    const detail = Math.max(2, Math.min(6, Math.floor(baseSubdivisions / 24)));
-    const geometry = new THREE.IcosahedronGeometry(outerRadius, detail);
-    const material = new THREE.ShaderMaterial({
-        uniforms,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.NormalBlending,
-        vertexShader: `
-            #include <common>
-            #include <logdepthbuf_pars_vertex>
-            varying vec3 vWorld;
-            void main() {
-                vec4 worldPos = modelMatrix * vec4(position, 1.0);
-                vWorld = worldPos.xyz;
-                gl_Position = projectionMatrix * viewMatrix * worldPos;
-                #include <logdepthbuf_vertex>
-            }
-        `,
-        fragmentShader: `
-            #include <common>
-            #include <logdepthbuf_pars_fragment>
-            uniform vec3 color;
-            uniform float opacity;
-            uniform float windOffset;
-            uniform vec3 sunDir;
-            uniform vec3 windDir;
-            uniform float quantity;
-            uniform float noiseScale;
-            uniform float mode;
-            uniform sampler2D volumeAtlas;
-            uniform float volumeN;
-            uniform float tilesX;
-            uniform float atlasW;
-            uniform float atlasH;
-            uniform float volumeExtentM;
-            uniform float metersPerUnit;
-            uniform mat3 planetInvRot;
-            uniform float planetInvScale;
-            uniform float innerRadius;
-            uniform float outerRadius;
-            varying vec3 vWorld;
-
-            float hash(vec3 p) {
-                p = fract(p * 0.3183099 + vec3(0.1,0.2,0.3));
-                p *= 17.0;
-                return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-            }
-            float noise(vec3 p) {
-                vec3 i = floor(p);
-                vec3 f = fract(p);
-                f = f*f*(3.0-2.0*f);
-                float n000 = hash(i + vec3(0,0,0));
-                float n100 = hash(i + vec3(1,0,0));
-                float n010 = hash(i + vec3(0,1,0));
-                float n110 = hash(i + vec3(1,1,0));
-                float n001 = hash(i + vec3(0,0,1));
-                float n101 = hash(i + vec3(1,0,1));
-                float n011 = hash(i + vec3(0,1,1));
-                float n111 = hash(i + vec3(1,1,1));
-                float nx00 = mix(n000, n100, f.x);
-                float nx10 = mix(n010, n110, f.x);
-                float nx01 = mix(n001, n101, f.x);
-                float nx11 = mix(n011, n111, f.x);
-                float nxy0 = mix(nx00, nx10, f.y);
-                float nxy1 = mix(nx01, nx11, f.y);
-                return mix(nxy0, nxy1, f.z);
-            }
-            float fbm(vec3 p) {
-                float sum = 0.0;
-                float amp = 0.55;
-                for(int i=0;i<4;i++){
-                    sum += noise(p) * amp;
-                    p *= 2.1;
-                    amp *= 0.5;
-                }
-                return sum;
-            }
-
-            vec2 sampleVolumeAtlas(vec3 idx) {
-                float tx = mod(idx.z, tilesX);
-                float ty = floor(idx.z / tilesX);
-                float ax = (tx * volumeN + idx.x + 0.5) / atlasW;
-                float ay = (ty * volumeN + idx.y + 0.5) / atlasH;
-                return texture2D(volumeAtlas, vec2(ax, ay)).rg; // cloud, rain
-            }
-
-            vec4 sampleVolumeTrilinear(vec3 posLocal) {
-                // posLocal is in planet-local *unscaled* render units.
-                vec3 posM = posLocal * metersPerUnit;
-                vec3 uvw = clamp(posM / max(volumeExtentM, 1e-3) * 0.5 + vec3(0.5), 0.0, 0.999999);
-                vec3 posGrid = uvw * (volumeN - 1.0);
-                vec3 i0 = floor(posGrid);
-                vec3 f = clamp(posGrid - i0, 0.0, 1.0);
-                vec3 i1 = min(i0 + 1.0, vec3(volumeN - 1.0));
-                vec2 c000 = sampleVolumeAtlas(i0);
-                vec2 c100 = sampleVolumeAtlas(vec3(i1.x, i0.y, i0.z));
-                vec2 c010 = sampleVolumeAtlas(vec3(i0.x, i1.y, i0.z));
-                vec2 c110 = sampleVolumeAtlas(vec3(i1.x, i1.y, i0.z));
-                vec2 c001 = sampleVolumeAtlas(vec3(i0.x, i0.y, i1.z));
-                vec2 c101 = sampleVolumeAtlas(vec3(i1.x, i0.y, i1.z));
-                vec2 c011 = sampleVolumeAtlas(vec3(i0.x, i1.y, i1.z));
-                vec2 c111 = sampleVolumeAtlas(i1);
-
-                float wx = f.x, wy = f.y, wz = f.z;
-                vec2 cx0 = mix(c000, c100, wx);
-                vec2 cx1 = mix(c010, c110, wx);
-                vec2 cx2 = mix(c001, c101, wx);
-                vec2 cx3 = mix(c011, c111, wx);
-                vec2 cy0 = mix(cx0, cx1, wy);
-                vec2 cy1 = mix(cx2, cx3, wy);
-                vec2 c = mix(cy0, cy1, wz);
-
-                return vec4(c, 0.0, 0.0);
-            }
-
-            float densityAt(vec3 pos, out float rainOut) {
-                float r = length(pos);
-                if (r < innerRadius || r > outerRadius) { rainOut = 0.0; return 0.0; }
-                float h = (r - innerRadius) / max(outerRadius - innerRadius, 1e-3);
-                float profile = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.55, 1.0, h));
-
-                // Slight atlas smoothing to hide voxel seams at high res.
-                vec4 v = sampleVolumeTrilinear(pos);
-                vec4 v2 = sampleVolumeTrilinear(pos + vec3(0.3, -0.2, 0.15) * metersPerUnit * 0.25);
-                vec4 v3 = sampleVolumeTrilinear(pos + vec3(-0.25, 0.18, -0.22) * metersPerUnit * 0.35);
-                vec4 v4 = sampleVolumeTrilinear(pos + vec3(0.12, 0.24, -0.3) * metersPerUnit * 0.2);
-                vec4 vMix = (v + v2 + v3 + v4) * 0.25;
-
-                float cloud = vMix.r;
-                float rain = vMix.g;
-                rainOut = rain;
-
-                float cover = cloud * (0.45 + quantity * 1.1);
-
-                float freq = max(1.0, noiseScale) * 0.003;
-                vec3 advDir = normalize(windDir);
-                vec3 np = pos * freq + advDir * (windOffset * 0.35);
-                float n = fbm(np);
-                if (mode > 0.5 && mode < 1.5) {
-                    n = abs(n) * 2.0 - 1.0;
-                } else if (mode > 1.5) {
-                    vec3 q = floor(np * 0.9);
-                    float c = fract(sin(dot(q, vec3(12.9898,78.233,45.164))) * 43758.5453);
-                    n = mix(n, c * 2.0 - 1.0, 0.55);
-                }
-                float detail = smoothstep(0.15, 0.75, n + 0.2);
-                float d = cover * profile * detail;
-                d *= mix(1.0, 1.25, rain);
-                return d;
-            }
-
-            vec2 raySphere(vec3 ro, vec3 rd, float r) {
-                float b = dot(ro, rd);
-                float c = dot(ro, ro) - r * r;
-                float h = b*b - c;
-                if (h < 0.0) return vec2(1e9, -1e9);
-                h = sqrt(h);
-                return vec2(-b - h, -b + h);
-            }
-
-            void main() {
-                #include <logdepthbuf_fragment>
-
-                vec3 ro = planetInvRot * (cameraPosition * planetInvScale);
-                vec3 p1 = planetInvRot * (vWorld * planetInvScale);
-                vec3 rd = normalize(p1 - ro);
-
-                vec2 tOuter = raySphere(ro, rd, outerRadius);
-                float tStart = max(tOuter.x, 0.0);
-                float tEnd = tOuter.y;
-                if (tEnd <= tStart) discard;
-
-                vec2 tInner = raySphere(ro, rd, innerRadius);
-                // Clip marching segment to the cloud shell so step sizes stay stable from orbit.
-                if (tInner.x <= tInner.y) {
-                    if (tInner.x > 0.0) tEnd = min(tEnd, tInner.x);
-                    else if (tInner.y > 0.0) tStart = max(tStart, tInner.y);
-                }
-                if (tEnd <= tStart) discard;
-
-                // More steps for higher volume resolutions to accumulate enough opacity.
-                int steps = int(clamp(mix(28.0, 48.0, clamp((volumeN - 32.0) / 96.0, 0.0, 1.0)), 28.0, 48.0));
-                float stepSize = (tEnd - tStart) / float(steps);
-                vec3 sum = vec3(0.0);
-                float alpha = 0.0;
-
-                vec3 sunLocal = normalize(planetInvRot * sunDir);
-
-                for (int i = 0; i < 48; i++) { // 48 is the max; exit early if steps smaller.
-                    if (i >= steps) break;
-                    float t = tStart + (float(i) + 0.5) * stepSize;
-                    vec3 pos = ro + rd * t;
-
-                    float rainNow = 0.0;
-                    float d = densityAt(pos, rainNow);
-                    if (d <= 1e-4) continue;
-
-                    float day = clamp(dot(normalize(pos), sunLocal), 0.0, 1.0);
-                    float light = mix(0.55, 1.15, day);
-                    vec3 ccol = mix(color, color * 0.85, rainNow) * light;
-
-                    float a = 1.0 - exp(-d * stepSize * 4.5);
-                    sum += (1.0 - alpha) * ccol * a;
-                    alpha += (1.0 - alpha) * a;
-                    if (alpha > 0.985) break;
-                }
-
-                alpha *= opacity;
-                if (alpha < 0.01) discard;
-                gl_FragColor = vec4(sum, alpha);
-            }
-        `
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.uniforms = uniforms;
-    mesh.userData.settings = settings;
-    mesh.renderOrder = 2;
-    return mesh;
+    return planetManager.cloudSystem.buildCloudMesh(
+        radius,
+        baseSubdivisions,
+        sunDir,
+        planetRadius,
+        seaLevel,
+        heightScale,
+        settings
+    );
 }
 
 function rebuildWaterCycleClouds(sunDir) {
@@ -1952,42 +910,33 @@ function rebuildWaterCycleClouds(sunDir) {
     const volTex = getWeatherVolumeTexture();
     const volMeta = getWeatherVolumeMeta();
 
-    let mesh = null;
-    if (volTex && volMeta) {
-        mesh = buildWaterCycleCloudMeshVolume(
-            lastPlanetSettings.radius + lastPlanetSettings.heightScale * 0.2,
-            lastPlanetSettings.subdivisions,
-            sunDir,
-            lastPlanetSettings.radius,
-            lastPlanetSettings.seaLevel,
-            lastPlanetSettings.heightScale,
-            settings,
-            volTex,
-            volMeta
-        );
-    } else {
-        mesh = buildCloudMesh(
-            lastPlanetSettings.radius + lastPlanetSettings.heightScale * 0.2,
-            lastPlanetSettings.subdivisions,
-            sunDir,
-            lastPlanetSettings.radius,
-            lastPlanetSettings.seaLevel,
-            lastPlanetSettings.heightScale,
-            settings
-        );
-    }
+    // Only render the water-cycle cloud layer when the 3D volume is available;
+    // avoid falling back to the simple procedural layer to keep visuals aligned with the sim.
+    if (!volTex || !volMeta) return;
+
+    const baseRadius = lastPlanetSettings.radius + lastPlanetSettings.heightScale * 0.2;
+    const mesh = planetManager.cloudSystem.buildVolumeCloudMesh(
+        baseRadius,
+        lastPlanetSettings.subdivisions,
+        sunDir,
+        lastPlanetSettings.radius,
+        lastPlanetSettings.seaLevel,
+        lastPlanetSettings.heightScale,
+        settings,
+        volTex,
+        volMeta
+    );
 
     waterCycleCloud = mesh;
     planetGroup.add(mesh);
 }
 
-function clearCloudMeshes() {
-    for (const c of clouds) {
-        planetGroup.remove(c);
-        c.geometry.dispose();
-        c.material.dispose?.();
-    }
-    clouds = [];
+function clearWaterCycleCloudMesh() {
+    if (!waterCycleCloud) return;
+    planetGroup.remove(waterCycleCloud);
+    waterCycleCloud.geometry.dispose();
+    waterCycleCloud.material.dispose?.();
+    waterCycleCloud = null;
 }
 
 function getBaseCloudSettings() {
@@ -2004,52 +953,52 @@ function getBaseCloudSettings() {
     };
 }
 
+function getWaterCycleCloudSettings() {
+    return {
+        id: 'water-cycle',
+        enabled: waterCycleCloudToggleEl?.checked ?? false,
+        alpha: clamp(parseFloat(cloudAlphaEl?.value) || 0.74, 0, 1),
+        speed: clamp(parseFloat(cloudSpeedEl?.value) || 0.9, 0, 2),
+        quantity: clamp(parseFloat(cloudQuantityEl?.value) || 0.76, 0, 2),
+        height: clamp(parseFloat(cloudHeightEl?.value) || -2.4, -5, 5),
+        color: cloudColorEl?.value || '#ffffff',
+        resolution: Math.max(1, Math.floor(parseFloat(cloudResolutionEl?.value) || 256)),
+        mode: cloudShaderEl?.value || 'billow'
+    };
+}
+
 function rebuildClouds(sunDir) {
     if (!lastPlanetSettings) return;
-    clearCloudMeshes();
     const layers = [];
     const base = getBaseCloudSettings();
     if (base.enabled) layers.push(base);
     for (const layer of cloudLayerSettings) {
         if (layer.enabled) layers.push(layer);
     }
-    for (const layer of layers) {
-        const mesh = buildCloudMesh(
-            lastPlanetSettings.radius + lastPlanetSettings.heightScale * 0.2,
-            lastPlanetSettings.subdivisions,
-            sunDir,
-            lastPlanetSettings.radius,
-            lastPlanetSettings.seaLevel,
-            lastPlanetSettings.heightScale,
-            layer
-        );
-        clouds.push(mesh);
-        planetGroup.add(mesh);
-    }
+    planetManager.cloudLayerSettings = layers;
+    planetManager.rebuildClouds(sunDir);
+    clouds = planetManager.cloudSystem?.clouds || [];
 }
 
 function updateAtmosphereVisuals(sunDir) {
     if (!lastPlanetSettings) return;
-    if (!atmosphereToggleEl.checked) {
-        if (atmosphere) atmosphere.visible = false;
-        return;
-    }
     const thickness = clamp(parseFloat(atmosphereEl.value) || 0.35, 0.05, 1.5);
     const heightOffset = clamp(parseFloat(atmosphereHeightEl.value) || 0.5, 0, 5);
     const alpha = clamp(parseFloat(atmosphereAlphaEl.value) || 1.0, 0, 1);
     const color = atmosphereColorEl.value || '#4da8ff';
-    replaceAtmosphere(
-        buildAtmosphereMesh(
-            lastPlanetSettings.radius,
-            lastPlanetSettings.subdivisions,
-            lastPlanetSettings.heightScale,
-            heightOffset,
-            thickness,
-            sunDir,
-            alpha,
-            color
-        )
-    );
+    const rainHaze = clamp(parseFloat(weatherRainHazeEl?.value) || 0.9, 0, 2);
+    const atmoSettings = {
+        ...lastPlanetSettings,
+        atmosphereEnabled: atmosphereToggleEl?.checked ?? true,
+        atmosphere: thickness,
+        atmosphereHeight: heightOffset,
+        atmosphereAlpha: alpha,
+        atmosphereColor: color
+    };
+    planetManager.updateAtmosphere(atmoSettings, { map: getWeatherTexture(), rainHaze });
+    atmosphere = planetManager.atmosphereSystem?.mesh || null;
+    planetManager.lastSettings = { ...(planetManager.lastSettings || {}), ...atmoSettings };
+    lastPlanetSettings = { ...lastPlanetSettings, ...atmoSettings };
 }
 
 function createCloudLayerControls(layer) {
@@ -2165,21 +1114,7 @@ function renderCloudLayerControls() {
     }
 }
 
-function ensureLandingMarker() {
-    if (landingMarker) return landingMarker;
-    const ring = new THREE.RingGeometry(0.15, 0.18, 32);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8, depthWrite: false });
-    landingMarker = new THREE.Mesh(ring, mat);
-    landingMarker.visible = false;
-    scene.add(landingMarker);
-    return landingMarker;
-}
-
 function onResize() {
-    const { innerWidth, innerHeight } = window;
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
     if (input) {
         input.setMode(isMobileDevice() ? 'mobile' : 'desktop');
     }
@@ -2251,67 +1186,36 @@ function animate() {
         if (input.consume('surface')) {
             handleSurfaceAction();
         }
-        if (planet && !generating) {
-            planet.rotation.y += 0.0009;
-        }
-        controls.update();
     }
+    planetManager.update(delta, !tinyControls.enabled && !generating);
     syncMobileVisibility();
 
     // Planet-local sun direction (for water cycle + cloud sampling)
     const invScale = updateWeatherFrame();
     updateMoon(delta);
-    // Update landing marker (orbit view).
-    ensureLandingMarker();
-    if (!tinyControls.enabled && planet) {
-        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-        const hit = raycaster.intersectObject(planet, false);
-        if (hit.length) {
-            landingMarker.visible = true;
-            landingMarker.position.copy(hit[0].point);
-            landingMarker.lookAt(camera.position);
-        } else {
-            landingMarker.visible = false;
-        }
-    } else if (landingMarker) {
-        landingMarker.visible = false;
-    }
     const runWeather = (waterCycleToggleEl?.checked ?? false) && (waterCycleRunEl?.checked ?? true);
     if (runWeather && waterCycleSystem?.enabled) {
         waterCycleSystem.update(delta, weatherSunLocal);
     }
 
-    // Atmosphere scattering operates in planet-local + unscaled coordinates.
-    atmosphereUniforms.sunDir.value.copy(weatherSunWorld);
-    atmosphereUniforms.planetInvRot.value.copy(weatherInvRot);
-    atmosphereUniforms.planetInvScale.value = invScale;
-    atmosphereUniforms.weatherMap.value = getWeatherTexture();
-
-    if (water) waterUniforms.time.value += 0.016;
-    if (freshwater) freshwater.material.uniforms.time.value += 0.016;
-    if (clouds.length) {
-        const dt = Math.min(delta, 0.25); // avoid huge jumps after tab inactivity
-        const weatherTex = DEFAULT_WEATHER_TEX;
-        const weatherAuxTex = DEFAULT_WEATHER_AUX_TEX;
-        for (const mesh of clouds) {
-            const u = mesh.userData.uniforms;
-            const s = mesh.userData.settings;
-            const speed = s.speed || 1;
-            // Accumulate wind offset at constant rate controlled by speed slider
-            // Wind direction is constant (set at creation) - no rotation to avoid spiral acceleration
-            u.windOffset.value += dt * speed * 0.3;
-            if (u.planetInvRot) u.planetInvRot.value.copy(weatherInvRot);
-            if (u.planetInvScale) u.planetInvScale.value = invScale;
-            if (u.weatherMap) u.weatherMap.value = weatherTex;
-            if (u.weatherAuxMap) u.weatherAuxMap.value = weatherAuxTex;
-        }
+    // Keep AtmosphereSystem uniforms in sync with moving sun/scale/weather.
+    if (planetManager.atmosphereSystem?.uniforms) {
+        const u = planetManager.atmosphereSystem.uniforms;
+        if (u.sunDir?.value) u.sunDir.value.copy(weatherSunWorld);
+        if (u.planetInvRot?.value) u.planetInvRot.value.copy(weatherInvRot);
+        if ('planetInvScale' in u) u.planetInvScale.value = invScale;
+        const weatherTex = getWeatherTexture() || planetManager.atmosphereSystem.defaultWeatherTexture;
+        if (!u.weatherMap) u.weatherMap = { value: weatherTex };
+        else u.weatherMap.value = weatherTex;
+        const rainHaze = clamp(parseFloat(weatherRainHazeEl?.value) || 0.9, 0, 2);
+        if (u.rainHaze) u.rainHaze.value = rainHaze;
     }
     if (waterCycleCloud) {
         const dt = Math.min(delta, 0.25);
-        const u = waterCycleCloud.userData.uniforms;
-        const s = waterCycleCloud.userData.settings;
+        const u = waterCycleCloud.userData?.uniforms || {};
+        const s = waterCycleCloud.userData?.settings || {};
         const speed = s?.speed || 1;
-        u.windOffset.value += dt * speed * 0.3;
+        if (u.windOffset?.value !== undefined) u.windOffset.value += dt * speed * 0.3;
         if (u.planetInvRot) u.planetInvRot.value.copy(weatherInvRot);
         if (u.planetInvScale) u.planetInvScale.value = invScale;
         if (u.weatherMap) u.weatherMap.value = getWeatherTexture();
@@ -2339,28 +1243,7 @@ function animate() {
     setPlanetWeatherTexture(getWeatherTexture());
     setPlanetWeatherAuxTexture(getWeatherAuxTexture());
     
-    renderer.render(scene, camera);
-}
-
-if (hudToggleEl) {
-    hudToggleEl.addEventListener('click', () => {
-        setHudCollapsed(!hudEl.classList.contains('collapsed'));
-    });
-}
-
-// Surface action global trigger
-document.addEventListener('surface', handleSurfaceAction);
-
-function toggleConfigPanel(show) {
-    if (!configPanelEl || !configToggleEl) return;
-    const next = show ?? configPanelEl.style.display !== 'block';
-    configPanelEl.style.display = next ? 'block' : 'none';
-    configToggleEl.setAttribute('aria-expanded', next.toString());
-    if (reticleEl) reticleEl.style.display = next ? 'none' : 'block';
-}
-
-if (configToggleEl) {
-    configToggleEl.addEventListener('click', () => toggleConfigPanel());
+    sceneManager.update(!tinyControls.enabled);
 }
 
 async function checkVRSupport() {
@@ -2376,7 +1259,7 @@ async function checkVRSupport() {
 
 async function startVR() {
     if (!navigator.xr) {
-        setStatus('WebXR not available');
+        ui.setStatus('WebXR not available');
         return;
     }
     try {
@@ -2405,7 +1288,7 @@ async function startVR() {
             camera.rotation.set(0, 0, 0);
         }
         vrToggleEl.textContent = 'Exit VR';
-        setStatus('VR session started');
+        ui.setStatus('VR session started');
         session.addEventListener('end', () => {
             xrSession = null;
             xrPrevButtons.clear();
@@ -2417,11 +1300,11 @@ async function startVR() {
             if (controls) controls.enabled = true;
 
             vrToggleEl.textContent = 'Enter VR';
-            setStatus('');
+            ui.setStatus('');
         });
     } catch (err) {
         console.error(err);
-        setStatus('VR start failed');
+        ui.setStatus('VR start failed');
     }
 }
 
@@ -2468,34 +1351,15 @@ if (vrToggleEl) {
 
 regenBtn.addEventListener('click', () => generateWorld(presetEl.value));
 
-const regenControls = [
-    resolutionEl,
-    platesEl,
-    plateSizeVarianceEl,
-    desymmetrizeTilingEl,
-    jitterEl,
-    heightScaleEl,
-    iterationsEl,
-    erosionRateEl,
-    evaporationEl,
-    seaLevelEl,
-    atmosphereEl,
-    smoothPassesEl,
-    subdivisionsEl,
-    iceCapEl,
-    plateDeltaEl,
-    faultTypeEl
-];
-
-function handleDiameterChange() {
-    if (!planetDiameterEl) return;
+function handleDiameterChange(kmOverride) {
+    const km = Number.isFinite(kmOverride) ? kmOverride : getPlanetDiameterKm();
     updateRangeLabels();
     if (lastPlanetSettings) {
-        lastPlanetSettings.planetDiameterKm = getPlanetDiameterKm();
+        lastPlanetSettings.planetDiameterKm = km;
     }
     applyPlanetScale();
     if (!generating) {
-        setStatus(`Planet diameter set to ${getPlanetDiameterKm().toLocaleString()} km`);
+        ui.setStatus(`Planet diameter set to ${km.toLocaleString()} km`);
     }
 }
 
@@ -2503,29 +1367,6 @@ function queueAutoRegen() {
     if (generating) return;
     clearTimeout(autoRegenTimer);
     autoRegenTimer = setTimeout(() => generateWorld(presetEl.value), 400);
-}
-
-regenControls.forEach((el) => {
-    el.addEventListener('input', () => {
-        updateRangeLabels();
-        markDirty();
-        queueAutoRegen();
-    });
-    el.addEventListener('change', () => {
-        updateRangeLabels();
-        markDirty();
-        queueAutoRegen();
-    });
-});
-
-presetEl.addEventListener('change', () => {
-    applyPreset(presetEl.value);
-    setStatus('Preset applied. Regenerating…');
-    queueAutoRegen();
-});
-if (planetDiameterEl) {
-    planetDiameterEl.addEventListener('input', handleDiameterChange);
-    planetDiameterEl.addEventListener('change', handleDiameterChange);
 }
 
 // Atmosphere/Cloud controls (no regen)
@@ -2692,7 +1533,7 @@ function applyWaterCycleConfig() {
     setPlanetWeatherDebugMode(debugMode);
     setVolumeDebugEnabled(debugVolume);
     setVolumeSliceVisibility(debugVolume);
-    atmosphereUniforms.rainHaze.value = rainHaze;
+    planetManager.setAtmosphereWeather(getWeatherTexture(), rainHaze);
     syncVolumeSliceRange();
     syncVolumeSliceRange();
 
@@ -2754,6 +1595,9 @@ if (waterCycleStepBtn) {
         waterCycleSystem.update(0, weatherSunLocal, { dtSimOverride: 600, forceReadback: true });
     });
 }
+
+// Surface action global trigger
+document.addEventListener('surface', handleSurfaceAction);
 
 addCloudLayerBtn.addEventListener('click', () => {
     const base = getBaseCloudSettings();

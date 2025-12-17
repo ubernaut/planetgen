@@ -112,6 +112,10 @@ export class PlanetManager {
         this.cloudSystem.update(delta);
     }
 
+    setAtmosphereWeather(map, rainHaze) {
+        this.atmosphereSystem?.setWeather(map, rainHaze);
+    }
+
     replacePlanet(mesh) {
         if (this.planet) {
             this.planet.geometry.dispose();
@@ -217,10 +221,13 @@ export class PlanetManager {
         this.sceneManager.controls.minDistance = Math.max(0.2, (10 * scale) * 0.1); // approx
     }
 
-    updateAtmosphere(settings) {
+    updateAtmosphere(settings, weather) {
         if (!this.lastSettings) return;
         const sunDir = this.sceneManager.getSunDir();
         this.atmosphereSystem.updateVisuals(settings, this.lastSettings.radius, this.lastSettings.subdivisions, this.lastSettings.heightScale, sunDir);
+        if (weather) {
+            this.atmosphereSystem.setWeather(weather.map, weather.rainHaze);
+        }
     }
 
     rebuildClouds(sunDir) {
