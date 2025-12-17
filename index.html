@@ -18,6 +18,10 @@
       --text: #e5e7eb;
       --muted: #94a3b8;
     }
+    #hud select option {
+      background: #0a0c12;
+      color: var(--text);
+    }
     * { box-sizing: border-box; }
     html, body {
       touch-action: none;
@@ -489,8 +493,8 @@
         <div class="field">
           <label for="atmosphereAlpha">Atmosphere alpha</label>
           <div class="range-row">
-            <input id="atmosphereAlpha" type="range" min="0" max="1" step="0.01" value="0.4">
-            <span class="value" id="atmosphereAlphaValue">0.40</span>
+            <input id="atmosphereAlpha" type="range" min="0" max="1" step="0.01" value="1">
+            <span class="value" id="atmosphereAlphaValue">1.00</span>
           </div>
         </div>
         <div class="field">
@@ -498,7 +502,7 @@
           <input id="atmosphereColor" type="color" value="#4da8ff">
         </div>
         <div class="field">
-          <label><input type="checkbox" id="cloudToggle" checked> Cloud layer enabled</label>
+          <label><input type="checkbox" id="cloudToggle"> Cloud layer enabled</label>
         </div>
         <div class="field">
           <label for="cloudAlpha">Cloud alpha</label>
@@ -551,6 +555,172 @@
           <button id="addCloudLayer" type="button">Add cloud layer</button>
         </div>
         <div id="cloudLayers"></div>
+      </details>
+      <details id="waterCycle" class="section">
+        <summary class="section-title collapser" style="cursor:pointer;">Water Cycle</summary>
+        <div class="field">
+          <label><input type="checkbox" id="waterCycleToggle" checked> Water cycle enabled (WebGPU)</label>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="waterCycleCloudToggle" checked> Water-cycle clouds (volumetric)</label>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="waterCycleRun" checked> Run simulation</label>
+        </div>
+        <div class="field">
+          <button id="waterCycleStep" type="button">Step simulation</button>
+        </div>
+        <div class="field">
+          <label for="weatherSimMode">Weather sim</label>
+          <select id="weatherSimMode">
+            <option value="3d" selected>3D volume (experimental)</option>
+            <option value="2d">2D columns (legacy)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="weatherVolumeRes">Volume resolution (N)</label>
+          <div class="range-row">
+            <input id="weatherVolumeRes" type="range" min="1" max="128" step="1" value="8">
+            <span class="value" id="weatherVolumeResValue">8</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayStepsMin">Raymarch steps (min)</label>
+          <div class="range-row">
+            <input id="weatherRayStepsMin" type="range" min="4" max="128" step="1" value="28">
+            <span class="value" id="weatherRayStepsMinValue">28</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayStepsMax">Raymarch steps (max)</label>
+          <div class="range-row">
+            <input id="weatherRayStepsMax" type="range" min="4" max="128" step="1" value="48">
+            <span class="value" id="weatherRayStepsMaxValue">48</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRayBundle">Ray bundling (pixels)</label>
+          <div class="range-row">
+            <input id="weatherRayBundle" type="range" min="1" max="100" step="1" value="1">
+            <span class="value" id="weatherRayBundleValue">1</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherAtmoThickness">Vertical slice thickness (km)</label>
+          <div class="range-row">
+            <input id="weatherAtmoThickness" type="range" min="5" max="60" step="1" value="60">
+            <span class="value" id="weatherAtmoThicknessValue">60</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="axialTilt">Axial tilt (deg)</label>
+          <div class="range-row">
+            <input id="axialTilt" type="range" min="0" max="45" step="0.1" value="23.4">
+            <span class="value" id="axialTiltValue">23.4</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="seasonProgress">Season (orbit phase)</label>
+          <div class="range-row">
+            <input id="seasonProgress" type="range" min="0" max="1" step="0.01" value="0">
+            <span class="value" id="seasonProgressValue">0.00</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherDebug">Weather debug view</label>
+          <select id="weatherDebug">
+            <option value="off" selected>Off</option>
+            <option value="cloud">Cloud</option>
+            <option value="rain">Rain</option>
+            <option value="pressure">Pressure</option>
+            <option value="soil">Soil</option>
+            <option value="temp">Temperature</option>
+            <option value="snow">Snowpack</option>
+            <option value="wind">Wind</option>
+            <option value="volume">Volume atlas (3D)</option>
+            <option value="volume-grid">Volume grid (3D wireframe)</option>
+          </select>
+        </div>
+        <div class="field" id="volumeSliceField" style="display:none;">
+          <label for="volumeSlice">Volume slice (debug)</label>
+          <div class="range-row">
+            <input id="volumeSlice" type="range" min="0" max="63" step="1" value="0">
+            <span class="value" id="volumeSliceValue">0</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherSpeed">Weather speed (minutes/sec)</label>
+          <div class="range-row">
+            <input id="weatherSpeed" type="range" min="0" max="60" step="1" value="1">
+            <span class="value" id="weatherSpeedValue">1</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherUpdateHz">Weather update rate (Hz)</label>
+          <div class="range-row">
+            <input id="weatherUpdateHz" type="range" min="1" max="20" step="1" value="1">
+            <span class="value" id="weatherUpdateHzValue">1</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherMoistureLayers">Moisture layers</label>
+          <div class="range-row">
+            <input id="weatherMoistureLayers" type="range" min="1" max="4" step="1" value="2">
+            <span class="value" id="weatherMoistureLayersValue">2</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherEvap">Evaporation strength</label>
+          <div class="range-row">
+            <input id="weatherEvap" type="range" min="0" max="3" step="0.01" value="1">
+            <span class="value" id="weatherEvapValue">1.00</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherPrecip">Precipitation strength</label>
+          <div class="range-row">
+            <input id="weatherPrecip" type="range" min="0" max="3" step="0.01" value="1">
+            <span class="value" id="weatherPrecipValue">1.00</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherWind">Wind strength</label>
+          <div class="range-row">
+            <input id="weatherWind" type="range" min="0" max="3" step="0.01" value="1">
+            <span class="value" id="weatherWindValue">1.00</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherWetness">Surface wetness strength</label>
+          <div class="range-row">
+            <input id="weatherWetness" type="range" min="0" max="2" step="0.01" value="0.75">
+            <span class="value" id="weatherWetnessValue">0.75</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherOceanInertia">Ocean thermal inertia</label>
+          <div class="range-row">
+            <input id="weatherOceanInertia" type="range" min="0.05" max="1" step="0.01" value="0.25">
+            <span class="value" id="weatherOceanInertiaValue">0.25</span>
+          </div>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="weatherRainFxToggle" checked> Visual rain</label>
+        </div>
+        <div class="field">
+          <label for="weatherRainFx">Rain FX strength</label>
+          <div class="range-row">
+            <input id="weatherRainFx" type="range" min="0" max="2" step="0.01" value="1">
+            <span class="value" id="weatherRainFxValue">1.00</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="weatherRainHaze">Rain haze</label>
+          <div class="range-row">
+            <input id="weatherRainHaze" type="range" min="0" max="2" step="0.01" value="0.90">
+            <span class="value" id="weatherRainHazeValue">0.90</span>
+          </div>
+        </div>
       </details>
       <button id="regen">Generate world</button>
       <div id="status">Preparing…</div>

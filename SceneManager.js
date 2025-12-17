@@ -9,16 +9,14 @@ export class SceneManager {
         }
         
         // Renderer
-        this.renderer = new THREE.WebGLRenderer({ 
-            antialias: true, 
-            canvas, 
-            logarithmicDepthBuffer: true 
-        });
+        this.renderer = this.createRenderer(canvas);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setClearColor(0x05070f);
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.xr.enabled = true; // Enable XR support
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         // Scene
         this.scene = new THREE.Scene();
@@ -63,9 +61,14 @@ export class SceneManager {
         }
 
         // Lights
-        this.scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.9));
+        this.scene.add(new THREE.HemisphereLight(0xd8e7ff, 0x0a0c12, 0.0009));
         this.dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
         this.dirLight.position.set(12, 16, 10);
+        this.dirLight.castShadow = true;
+        this.dirLight.shadow.mapSize.set(2048, 2048);
+        this.dirLight.shadow.camera.near = 1;
+        this.dirLight.shadow.camera.far = 200;
+        this.scene.add(this.dirLight.target);
         this.scene.add(this.dirLight);
 
         // Starfield
@@ -74,6 +77,24 @@ export class SceneManager {
         // Bindings
         this.onResize = this.onResize.bind(this);
         window.addEventListener('resize', this.onResize);
+    }
+
+    createRenderer(canvas) {
+        const attempts = [
+            { ctor: THREE.WebGLRenderer, opts: { antialias: true, canvas, logarithmicDepthBuffer: true } },
+            { ctor: THREE.WebGLRenderer, opts: { antialias: true, canvas, logarithmicDepthBuffer: false } },
+            { ctor: THREE.WebGLRenderer, opts: { antialias: false, canvas, logarithmicDepthBuffer: false } },
+            { ctor: THREE.WebGL1Renderer, opts: { antialias: true, canvas, logarithmicDepthBuffer: false } }
+        ];
+        for (let i = 0; i < attempts.length; i++) {
+            const { ctor, opts } = attempts[i];
+            try {
+                return new ctor(opts);
+            } catch (err) {
+                console.warn(`WebGL init failed (attempt ${i + 1})`, err);
+            }
+        }
+        throw new Error('WebGL context could not be created. Enable WebGL/hardware acceleration or try a different browser/XR emulator configuration.');
     }
 
     buildStarfield() {
@@ -110,8 +131,10 @@ export class SceneManager {
         this.controls.handleResize();
     }
 
-    update() {
-        this.controls.update();
+    update(updateControls = true) {
+        if (updateControls && this.controls) {
+            this.controls.update();
+        }
         this.renderer.render(this.scene, this.camera);
     }
 

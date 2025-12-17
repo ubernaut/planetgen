@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PlanetForge } from './worldgen.js';
 import { AtmosphereSystem } from './AtmosphereSystem.js';
 import { CloudSystem } from './CloudSystem.js';
+import { normalizeHeightmap, smoothHeightmap } from './utils.js';
+import { DEFAULT_DIAMETER_KM } from './constants.js';
 
 export class PlanetManager {
     constructor(sceneManager) {
@@ -54,8 +56,8 @@ export class PlanetManager {
                 evaporation: settings.evaporation
             });
 
-            this.normalizeHeightmap(this.forge.data);
-            this.smoothHeightmap(this.forge.data, this.forge.size, settings.smoothPasses);
+            normalizeHeightmap(this.forge.data);
+            smoothHeightmap(this.forge.data, this.forge.size, settings.smoothPasses);
             this.forge.applyHydrology({ seaLevel: settings.seaLevel, riverDepth: 0.015, lakeThreshold: 0.003 });
 
             updateStatus('Meshing planet…');
@@ -108,6 +110,10 @@ export class PlanetManager {
         
         this.atmosphereSystem.update(delta);
         this.cloudSystem.update(delta);
+    }
+
+    setAtmosphereWeather(map, rainHaze) {
+        this.atmosphereSystem?.setWeather(map, rainHaze);
     }
 
     replacePlanet(mesh) {
@@ -209,54 +215,19 @@ export class PlanetManager {
         return new THREE.Mesh(geometry, material);
     }
 
-    normalizeHeightmap(buffer) {
-        let min = Infinity;
-        let max = -Infinity;
-        for (let i = 0; i < buffer.length; i++) {
-            const v = buffer[i];
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
-        const range = Math.max(max - min, 1e-5);
-        for (let i = 0; i < buffer.length; i++) {
-            buffer[i] = (buffer[i] - min) / range;
-        }
-    }
-    
-    smoothHeightmap(buffer, size, passes = 1) {
-        if (passes <= 0) return;
-        const temp = new Float32Array(buffer.length);
-        for (let p = 0; p < passes; p++) {
-            for (let y = 0; y < size; y++) {
-                const yUp = Math.max(0, y - 1);
-                const yDown = Math.min(size - 1, y + 1);
-                for (let x = 0; x < size; x++) {
-                    const left = (x - 1 + size) % size;
-                    const right = (x + 1) % size;
-                    const idx = y * size + x;
-                    const acc = buffer[idx] * 2
-                        + buffer[y * size + left]
-                        + buffer[y * size + right]
-                        + buffer[yUp * size + x]
-                        + buffer[yDown * size + x];
-                    temp[idx] = acc / 6;
-                }
-            }
-            buffer.set(temp);
-        }
-    }
-
     applyPlanetScale(diameterKm) {
-        const DEFAULT_DIAMETER_KM = 1000;
         const scale = (diameterKm || DEFAULT_DIAMETER_KM) / DEFAULT_DIAMETER_KM;
         this.sceneManager.planetGroup.scale.setScalar(scale);
         this.sceneManager.controls.minDistance = Math.max(0.2, (10 * scale) * 0.1); // approx
     }
 
-    updateAtmosphere(settings) {
+    updateAtmosphere(settings, weather) {
         if (!this.lastSettings) return;
         const sunDir = this.sceneManager.getSunDir();
         this.atmosphereSystem.updateVisuals(settings, this.lastSettings.radius, this.lastSettings.subdivisions, this.lastSettings.heightScale, sunDir);
+        if (weather) {
+            this.atmosphereSystem.setWeather(weather.map, weather.rainHaze);
+        }
     }
 
     rebuildClouds(sunDir) {

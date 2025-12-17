@@ -19,98 +19,15 @@ export class InputRouter {
         this.once = new Set();
         this.lookDelta = { x: 0, y: 0 };
         this.mode = 'desktop';
-        this.onKeyDown = this.onKeyDown.bind(this);
-        this.onKeyUp = this.onKeyUp.bind(this);
-        this.target.addEventListener('keydown', this.onKeyDown);
-        this.target.addEventListener('keyup', this.onKeyUp);
+        this.lookMode = 'orbit'; // 'orbit' or 'surface'
     }
 
     setMode(mode) {
         this.mode = mode;
     }
 
-    onKeyDown(event) {
-        const { code, repeat } = event;
-        switch (code) {
-            case 'KeyW':
-            case 'ArrowUp':
-                this.state.forward = true;
-                break;
-            case 'KeyS':
-            case 'ArrowDown':
-                this.state.backward = true;
-                break;
-            case 'KeyA':
-            case 'ArrowLeft':
-                this.state.left = true;
-                break;
-            case 'KeyD':
-            case 'ArrowRight':
-                this.state.right = true;
-                break;
-            case 'Space':
-                this.state.up = true;
-                if (!repeat) this.once.add('jump');
-                break;
-            case 'ControlLeft':
-            case 'ControlRight':
-                this.state.down = true;
-                break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                this.state.run = true;
-                break;
-            case 'KeyQ':
-                this.state.rollLeft = true;
-                break;
-            case 'KeyE':
-                this.state.rollRight = true;
-                break;
-            case 'KeyF':
-                if (!repeat) this.once.add('flyToggle');
-                break;
-            case 'Escape':
-                if (!repeat) this.once.add('exit');
-                break;
-        }
-    }
-
-    onKeyUp(event) {
-        switch (event.code) {
-            case 'KeyW':
-            case 'ArrowUp':
-                this.state.forward = false;
-                break;
-            case 'KeyS':
-            case 'ArrowDown':
-                this.state.backward = false;
-                break;
-            case 'KeyA':
-            case 'ArrowLeft':
-                this.state.left = false;
-                break;
-            case 'KeyD':
-            case 'ArrowRight':
-                this.state.right = false;
-                break;
-            case 'Space':
-                this.state.up = false;
-                break;
-            case 'ControlLeft':
-            case 'ControlRight':
-                this.state.down = false;
-                break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                this.state.run = false;
-                break;
-            case 'KeyQ':
-                this.state.rollLeft = false;
-                break;
-            case 'KeyE':
-                this.state.rollRight = false;
-                break;
-        }
+    setLookMode(mode) {
+        this.lookMode = mode;
     }
 
     consume(name) {
@@ -157,7 +74,5 @@ export class InputRouter {
     }
 
     dispose() {
-        this.target.removeEventListener('keydown', this.onKeyDown);
-        this.target.removeEventListener('keyup', this.onKeyUp);
     }
 }

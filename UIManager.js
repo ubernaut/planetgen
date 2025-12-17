@@ -1,3 +1,6 @@
+import { clamp } from './utils.js';
+import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, PRESETS } from './constants.js';
+
 export class UIManager {
     constructor(callbacks) {
         this.callbacks = callbacks || {};
@@ -82,16 +85,93 @@ export class UIManager {
             planetDiameterValue: document.getElementById('planetDiameterValue')
         };
 
-        // Constants
-        this.BASE_RADIUS_UNITS = 10;
-        this.DEFAULT_DIAMETER_KM = 1000;
-
         // State
         this.cloudLayerSettings = [];
 
+        this.setStatus = this.setStatus.bind(this);
         this.bindEvents();
         this.updateRangeLabels();
         this.renderCloudLayerControls();
+    }
+
+    getPlanetDiameterKm() {
+        const value = parseFloat(this.els.planetDiameter?.value);
+        return clamp(Number.isFinite(value) ? value : DEFAULT_DIAMETER_KM, 1, 1000);
+    }
+
+    applyPreset(key) {
+        const preset = PRESETS[key] || PRESETS.balanced;
+        if (this.els.preset) this.els.preset.value = key;
+        if (this.els.cloudToggle) this.els.cloudToggle.checked = false;
+        if (this.els.resolution) this.els.resolution.value = preset.resolution;
+        if (this.els.plates) this.els.plates.value = preset.numPlates;
+        if (this.els.plateSizeVariance) this.els.plateSizeVariance.value = preset.plateSizeVariance ?? 0.35;
+        if (this.els.desymmetrizeTiling) this.els.desymmetrizeTiling.checked = preset.desymmetrizeTiling ?? true;
+        if (this.els.jitter) this.els.jitter.value = preset.jitter;
+        if (this.els.heightScale) this.els.heightScale.value = preset.heightScale;
+        if (this.els.iterations) this.els.iterations.value = preset.iterations;
+        if (this.els.erosionRate) this.els.erosionRate.value = preset.erosionRate;
+        if (this.els.evaporation) this.els.evaporation.value = preset.evaporation;
+        if (this.els.seaLevel) this.els.seaLevel.value = preset.seaLevel ?? 0.53;
+        if (this.els.atmosphere) this.els.atmosphere.value = preset.atmosphere ?? 0.35;
+        if (this.els.atmosphereHeight) this.els.atmosphereHeight.value = preset.atmosphereHeight ?? 0.5;
+        if (this.els.atmosphereAlpha) this.els.atmosphereAlpha.value = preset.atmosphereAlpha ?? 1.0;
+        if (this.els.atmosphereColor) this.els.atmosphereColor.value = preset.atmosphereColor || '#4da8ff';
+        if (this.els.smoothPasses) this.els.smoothPasses.value = preset.smoothPasses ?? 20;
+        if (this.els.subdivisions) this.els.subdivisions.value = preset.subdivisions ?? 60;
+        if (this.els.iceCap) this.els.iceCap.value = preset.iceCap ?? 0.15;
+        if (this.els.plateDelta) this.els.plateDelta.value = preset.plateDelta ?? 1.25;
+        if (this.els.faultType) this.els.faultType.value = preset.faultType || 'ridge';
+        this.updateRangeLabels();
+    }
+
+    readSettings() {
+        return {
+            resolution: clamp(parseInt(this.els.resolution?.value, 10) || 256, 64, 4096),
+            numPlates: clamp(parseInt(this.els.plates?.value, 10) || 7, 1, 30),
+            plateSizeVariance: clamp(parseFloat(this.els.plateSizeVariance?.value) || 0, 0, 2),
+            desymmetrizeTiling: Boolean(this.els.desymmetrizeTiling?.checked),
+            jitter: clamp(parseFloat(this.els.jitter?.value) || 0.5, 0, 1),
+            iterations: clamp(parseInt(this.els.iterations?.value, 10) || 50000, 1000, 2000000),
+            erosionRate: clamp(parseFloat(this.els.erosionRate?.value) || 0.1, 0.001, 2),
+            evaporation: clamp(parseFloat(this.els.evaporation?.value) || 0.02, 0, 2),
+            heightScale: clamp(parseFloat(this.els.heightScale?.value) || 2, 0, 80),
+            seaLevel: clamp(parseFloat(this.els.seaLevel?.value) || 0.5, 0, 1),
+            atmosphere: clamp(parseFloat(this.els.atmosphere?.value) || 0.35, 0.05, 1.5),
+            atmosphereHeight: clamp(parseFloat(this.els.atmosphereHeight?.value) || 0.5, 0, 5),
+            atmosphereAlpha: clamp(parseFloat(this.els.atmosphereAlpha?.value) || 1.0, 0, 1),
+            atmosphereColor: this.els.atmosphereColor?.value || '#4da8ff',
+            smoothPasses: Math.round(clamp(parseFloat(this.els.smoothPasses?.value) || 0, 0, 40)),
+            subdivisions: Math.round(clamp(parseFloat(this.els.subdivisions?.value) || 128, 0, 512)),
+            iceCap: clamp(parseFloat(this.els.iceCap?.value) || 0.1, 0, 1),
+            plateDelta: clamp(parseFloat(this.els.plateDelta?.value) || 1.25, 0, 2),
+            faultType: this.els.faultType?.value || 'ridge',
+            radius: BASE_RADIUS_UNITS
+        };
+    }
+
+    writeSettings(settings) {
+        if (!settings) return;
+        if (this.els.resolution) this.els.resolution.value = settings.resolution;
+        if (this.els.plates) this.els.plates.value = settings.numPlates;
+        if (this.els.plateSizeVariance) this.els.plateSizeVariance.value = settings.plateSizeVariance;
+        if (this.els.desymmetrizeTiling) this.els.desymmetrizeTiling.checked = !!settings.desymmetrizeTiling;
+        if (this.els.jitter) this.els.jitter.value = settings.jitter;
+        if (this.els.iterations) this.els.iterations.value = settings.iterations;
+        if (this.els.erosionRate) this.els.erosionRate.value = settings.erosionRate;
+        if (this.els.evaporation) this.els.evaporation.value = settings.evaporation;
+        if (this.els.heightScale) this.els.heightScale.value = settings.heightScale;
+        if (this.els.seaLevel) this.els.seaLevel.value = settings.seaLevel;
+        if (this.els.atmosphere) this.els.atmosphere.value = settings.atmosphere;
+        if (this.els.atmosphereHeight) this.els.atmosphereHeight.value = settings.atmosphereHeight;
+        if (this.els.atmosphereAlpha) this.els.atmosphereAlpha.value = settings.atmosphereAlpha;
+        if (this.els.atmosphereColor) this.els.atmosphereColor.value = settings.atmosphereColor;
+        if (this.els.smoothPasses) this.els.smoothPasses.value = settings.smoothPasses;
+        if (this.els.subdivisions) this.els.subdivisions.value = settings.subdivisions;
+        if (this.els.iceCap) this.els.iceCap.value = settings.iceCap;
+        if (this.els.plateDelta) this.els.plateDelta.value = settings.plateDelta;
+        if (this.els.faultType) this.els.faultType.value = settings.faultType;
+        this.updateRangeLabels();
     }
 
     bindEvents() {
@@ -202,7 +282,7 @@ export class UIManager {
     }
 
     setStatus(text) {
-        if (this.els.status) this.els.status.textContent = text;
+        if (this.els?.status) this.els.status.textContent = text;
     }
 
     setHudCollapsed(collapsed) {
@@ -265,34 +345,30 @@ export class UIManager {
         if(els.lookSensitivityY && els.lookSensitivityYValue) els.lookSensitivityYValue.textContent = Number(els.lookSensitivityY.value).toFixed(1);
     }
 
-    clamp(v, min, max) {
-        return Math.min(Math.max(v, min), max);
-    }
-
     readSettings() {
         const els = this.els;
         return {
-            resolution: this.clamp(parseInt(els.resolution.value, 10) || 256, 64, 4096),
-            numPlates: this.clamp(parseInt(els.plates.value, 10) || 9, 4, 400),
-            plateSizeVariance: this.clamp(parseFloat(els.plateSizeVariance.value) || 0, 0, 2),
+            resolution: clamp(parseInt(els.resolution.value, 10) || 256, 64, 4096),
+            numPlates: clamp(parseInt(els.plates.value, 10) || 9, 4, 400),
+            plateSizeVariance: clamp(parseFloat(els.plateSizeVariance.value) || 0, 0, 2),
             desymmetrizeTiling: Boolean(els.desymmetrizeTiling?.checked),
-            jitter: this.clamp(parseFloat(els.jitter.value) || 0.5, 0, 1),
-            iterations: this.clamp(parseInt(els.iterations.value, 10) || 50000, 1000, 2000000),
-            erosionRate: this.clamp(parseFloat(els.erosionRate.value) || 0.1, 0.001, 2),
-            evaporation: this.clamp(parseFloat(els.evaporation.value) || 0.02, 0, 2),
-            heightScale: this.clamp(parseFloat(els.heightScale.value) || 2, 0, 80),
-            seaLevel: this.clamp(parseFloat(els.seaLevel.value) || 0.5, 0, 1),
-            atmosphere: this.clamp(parseFloat(els.atmosphere.value) || 0.35, 0.05, 1.5),
-            atmosphereHeight: this.clamp(parseFloat(els.atmosphereHeight.value) || 0.5, 0, 5),
-            atmosphereAlpha: this.clamp(parseFloat(els.atmosphereAlpha.value) || 0.4, 0, 1),
+            jitter: clamp(parseFloat(els.jitter.value) || 0.5, 0, 1),
+            iterations: clamp(parseInt(els.iterations.value, 10) || 50000, 1000, 2000000),
+            erosionRate: clamp(parseFloat(els.erosionRate.value) || 0.1, 0.001, 2),
+            evaporation: clamp(parseFloat(els.evaporation.value) || 0.02, 0, 2),
+            heightScale: clamp(parseFloat(els.heightScale.value) || 2, 0, 80),
+            seaLevel: clamp(parseFloat(els.seaLevel.value) || 0.5, 0, 1),
+            atmosphere: clamp(parseFloat(els.atmosphere.value) || 0.35, 0.05, 1.5),
+            atmosphereHeight: clamp(parseFloat(els.atmosphereHeight.value) || 0.5, 0, 5),
+            atmosphereAlpha: clamp(parseFloat(els.atmosphereAlpha.value) || 1.0, 0, 1),
             atmosphereColor: els.atmosphereColor.value || '#4da8ff',
             atmosphereEnabled: els.atmosphereToggle.checked,
-            smoothPasses: Math.round(this.clamp(parseFloat(els.smoothPasses.value) || 0, 0, 40)),
-            subdivisions: Math.round(this.clamp(parseFloat(els.subdivisions.value) || 128, 0, 512)),
-            iceCap: this.clamp(parseFloat(els.iceCap.value) || 0.1, 0, 1),
-            plateDelta: this.clamp(parseFloat(els.plateDelta.value) || 1.25, 0, 2),
+            smoothPasses: Math.round(clamp(parseFloat(els.smoothPasses.value) || 0, 0, 40)),
+            subdivisions: Math.round(clamp(parseFloat(els.subdivisions.value) || 128, 0, 512)),
+            iceCap: clamp(parseFloat(els.iceCap.value) || 0.1, 0, 1),
+            plateDelta: clamp(parseFloat(els.plateDelta.value) || 1.25, 0, 2),
             faultType: els.faultType.value || 'ridge',
-            radius: this.BASE_RADIUS_UNITS,
+            radius: BASE_RADIUS_UNITS,
             planetDiameterKm: this.getPlanetDiameterKm()
         };
     }
@@ -322,19 +398,19 @@ export class UIManager {
     }
 
     getPlanetDiameterKm() {
-        if (!this.els.planetDiameter) return this.DEFAULT_DIAMETER_KM;
+        if (!this.els.planetDiameter) return DEFAULT_DIAMETER_KM;
         const value = parseFloat(this.els.planetDiameter.value);
-        return this.clamp(Number.isFinite(value) ? value : this.DEFAULT_DIAMETER_KM, 1, 1000);
+        return clamp(Number.isFinite(value) ? value : DEFAULT_DIAMETER_KM, 1, 1000);
     }
 
     getBaseCloudSettings() {
         return {
             id: 'base',
             enabled: this.els.cloudToggle.checked,
-            alpha: this.clamp(parseFloat(this.els.cloudAlpha.value) || 0.74, 0, 1),
-            speed: this.clamp(parseFloat(this.els.cloudSpeed.value) || 0.9, 0, 2),
-            quantity: this.clamp(parseFloat(this.els.cloudQuantity.value) || 0.76, 0, 1),
-            height: this.clamp(parseFloat(this.els.cloudHeight.value) || -2.4, -5, 5),
+            alpha: clamp(parseFloat(this.els.cloudAlpha.value) || 0.74, 0, 1),
+            speed: clamp(parseFloat(this.els.cloudSpeed.value) || 0.9, 0, 2),
+            quantity: clamp(parseFloat(this.els.cloudQuantity.value) || 0.76, 0, 1),
+            height: clamp(parseFloat(this.els.cloudHeight.value) || -2.4, -5, 5),
             color: this.els.cloudColor.value || '#ffffff',
             resolution: Math.max(1, Math.floor(parseFloat(this.els.cloudResolution.value) || 256)),
             mode: this.els.cloudShader.value || 'billow'
