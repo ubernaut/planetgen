@@ -52,6 +52,7 @@ llm instructions for this file: this file is a log of development. It's used to 
 - 2025-12-16: Rolled back keyboard handling in InputRouter (now mobile/VR only), restored direct keyboard listeners inside TinyPlanetControls with merged external+local input, and removed orbit keyboard look hooks. Test: `npm test`.
 - 2025-12-16: Fixed TinyPlanet ground movement to respect camera+player orientation (forward now uses combined quaternions projected onto local up) so movement aligns with view direction. Test: `npm test`.
 - 2025-12-16: Applied Quake-style smoothing on TinyPlanet ground movement: reduced speeds, added ground friction/stop speed, acceleration, air control, dt clamp, and moved gravity integration to dt for smoother, continuous motion. Test: `npm test`.
+<<<<<<< Updated upstream
 - 2025-12-16: Removed green reticle from orbit view (no longer needed for landing indicator). Documented deficiencies and refactor targets in branch.md: incomplete module integration (SceneManager/UIManager/PlanetManager exist but unused), duplicate code across files, missing tests, no centralized state.
 - 2025-12-16: HIGH PRIORITY REFACTOR - Created shared modules to consolidate duplicate code:
   - Created utils.js with common utility functions: clamp(), lerp(), normalizeHeightmap(), smoothHeightmap(), isMobileDevice(), nextFrame(), sampleDataTextureRGBA()
@@ -86,3 +87,6 @@ llm instructions for this file: this file is a log of development. It's used to 
 - 2025-12-16: Water-cycle clouds: restored raymarched sampling with resolution-scaled steps in CloudSystem volume shader (denser sampling for high-res atlases, Beer-Lambert accumulation) to match higher-resolution weather visuals. Test: `npm test`.
 - 2025-12-16: Fixed shader compile error in CloudSystem volume fragment (moved density sampling into a function and kept a single main). Test: `npm test`.
 - 2025-12-16: Volumetric clouds: bumped sun highlight mix back to 0.7→1.4 and added a tiny density floor (0.01 * quantity) to prevent “empty shell” frames when the volume is ultra-sparse. Test: `npm test`.
+=======
+- 2025-12-16: Ported the inline water-cycle volumetric cloud shader into CloudSystem.buildVolumeCloudMesh (trilinear atlas sampling + procedural FBM detail, rain modulation, shell clipping, planet/volume meta-driven radii). Test: `npm test`.
+>>>>>>> Stashed changes
