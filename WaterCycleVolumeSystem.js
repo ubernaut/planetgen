@@ -560,9 +560,9 @@ export class WaterCycleVolumeSystem {
     _writeUniforms(dtSim, timeSim, sunDirLocal) {
         const u = this.uniformData;
 
-        // Define the cube extent around the planet using the planet radius so voxel positions
-        // line up with the surface shell; atmo thickness is applied separately in altitude tests.
-        const extentM = this.planetRadiusM;
+        // Define the cube extent to encompass the entire atmosphere shell.
+        // This ensures voxels can represent the full atmospheric volume from surface to top.
+        const extentM = this.planetRadiusM + this.atmoThicknessM + this.mountainHeightM;
         const invVoxel = this.volumeN / Math.max(2 * extentM, 1e-6);
         const resScale = Math.max(1, this.volumeN / 32);
 
@@ -781,6 +781,80 @@ fn packRGBA8(r: f32, g: f32, b: f32, a: f32) -> u32 {
   return (A << 24u) | (B << 16u) | (G << 8u) | R;
 }
 
+// Simplex noise for turbulent pressure forcing
+fn mod289_3(x: vec3<f32>) -> vec3<f32> { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn mod289_4(x: vec4<f32>) -> vec4<f32> { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn permute(x: vec4<f32>) -> vec4<f32> { return mod289_4(((x * 34.0) + 1.0) * x); }
+fn taylorInvSqrt(r: vec4<f32>) -> vec4<f32> { return 1.79284291400159 - 0.85373472095314 * r; }
+
+fn snoise(v: vec3<f32>) -> f32 {
+  let C = vec2<f32>(1.0/6.0, 1.0/3.0);
+  let D = vec4<f32>(0.0, 0.5, 1.0, 2.0);
+  
+  var i = floor(v + dot(v, vec3<f32>(C.y, C.y, C.y)));
+  let x0 = v - i + dot(i, vec3<f32>(C.x, C.x, C.x));
+  
+  let g = step(x0.yzx, x0.xyz);
+  let l = 1.0 - g;
+  let i1 = min(g.xyz, l.zxy);
+  let i2 = max(g.xyz, l.zxy);
+  
+  let x1 = x0 - i1 + vec3<f32>(C.x, C.x, C.x);
+  let x2 = x0 - i2 + vec3<f32>(C.y, C.y, C.y);
+  let x3 = x0 - D.yyy;
+  
+  i = mod289_3(i);
+  let p = permute(permute(permute(
+    i.z + vec4<f32>(0.0, i1.z, i2.z, 1.0))
+    + i.y + vec4<f32>(0.0, i1.y, i2.y, 1.0))
+    + i.x + vec4<f32>(0.0, i1.x, i2.x, 1.0));
+  
+  let n_ = 0.142857142857;
+  let ns = n_ * D.wyz - D.xzx;
+  
+  let j = p - 49.0 * floor(p * ns.z * ns.z);
+  let x_ = floor(j * ns.z);
+  let y_ = floor(j - 7.0 * x_);
+  
+  let x = x_ * ns.x + vec4<f32>(ns.y, ns.y, ns.y, ns.y);
+  let y = y_ * ns.x + vec4<f32>(ns.y, ns.y, ns.y, ns.y);
+  let h = 1.0 - abs(x) - abs(y);
+  
+  let b0 = vec4<f32>(x.xy, y.xy);
+  let b1 = vec4<f32>(x.zw, y.zw);
+  
+  let s0 = floor(b0) * 2.0 + 1.0;
+  let s1 = floor(b1) * 2.0 + 1.0;
+  let sh = -step(h, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+  
+  let a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  let a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  
+  var p0 = vec3<f32>(a0.xy, h.x);
+  var p1 = vec3<f32>(a0.zw, h.y);
+  var p2 = vec3<f32>(a1.xy, h.z);
+  var p3 = vec3<f32>(a1.zw, h.w);
+  
+  let norm = taylorInvSqrt(vec4<f32>(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  
+  var m = max(vec4<f32>(0.6, 0.6, 0.6, 0.6) - vec4<f32>(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), vec4<f32>(0.0, 0.0, 0.0, 0.0));
+  m = m * m;
+  return 42.0 * dot(m * m, vec4<f32>(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+
+// Multi-octave turbulent noise
+fn turbulentNoise(p: vec3<f32>, t: f32) -> f32 {
+  var n = 0.0;
+  // Large-scale pressure systems
+  n += snoise(p * 2.0 + vec3<f32>(t * 0.003, 0.0, t * 0.002)) * 1.0;
+  // Medium-scale disturbances  
+  n += snoise(p * 4.0 + vec3<f32>(t * 0.007, t * 0.005, 0.0)) * 0.5;
+  // Smaller turbulent eddies
+  n += snoise(p * 8.0 + vec3<f32>(0.0, t * 0.01, t * 0.008)) * 0.25;
+  return n;
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let n = N();
@@ -950,8 +1024,34 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   qr += pr;
 
   // Pressure relax toward a T/q-driven target.
-  let pEq = -(T - baseTempK()) * pTempCoeff() - (qv * pVaporCoeff()) - (altEff * 0.08);
-  p = mix(p, pEq, clamp(dt() * pSmooth(), 0.0, 1.0));
+  // Base pressure centered at 0 - warm/moist = low (negative), cold/dry = high (positive)
+  // REDUCED coefficients to keep pressure in a sensible range [-3000, +3000]
+  let tempAnomaly = (T - baseTempK());  // + = warm, - = cold
+  let moistAnomaly = qv * 500.0;         // Reduced: More vapor = lower pressure
+  let altPenalty = altEff * 0.01;        // Reduced: Higher = lower pressure
+  let pPhysics = -tempAnomaly * 10.0 - moistAnomaly - altPenalty;
+  
+  // Turbulent noise for weather systems - REDUCED strength to stay in range
+  let turbStrength = 2500.0;  // Reduced from 5000
+  let noisePos = dir * 4.0;   // Higher spatial frequency for more distinct cells
+  let noiseTime = timeS() * 0.001;  // Faster evolution  
+  let pTurb = turbulentNoise(noisePos, noiseTime) * turbStrength;
+  
+  // Hadley cell structure - latitude-dependent pressure bands
+  // Subtropical highs at ~30°, polar highs at poles, ITCZ low at equator
+  let latAbs = abs(dir.y);
+  // Subtropical high pressure belt (stronger)
+  let subtropicalHigh = exp(-pow((latAbs - 0.5) / 0.2, 2.0)) * 1500.0;
+  // Equatorial low (ITCZ)
+  let itczLow = exp(-pow(latAbs / 0.15, 2.0)) * -1200.0;
+  // Polar high (weaker)
+  let polarHigh = smoothstep(0.7, 0.95, latAbs) * 800.0;
+  let hadleyP = subtropicalHigh + itczLow + polarHigh;
+  
+  let pEq = pPhysics + pTurb + hadleyP;
+  
+  // Faster relaxation so pressure systems develop quickly
+  p = mix(p, pEq, clamp(dt() * pSmooth() * 3.0, 0.0, 1.0));
 
   // Wind from geostrophic balance in the local tangent plane + weak ageostrophic convergence.
   let pL = stateSrc[idx3(xL, gid.y, gid.z)].b.x;
@@ -1015,8 +1115,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   stateDst[i] = Voxel(vec4<f32>(T, qv, qc, qr), vec4<f32>(p, vel));
 
-  // Pack volume atlas (cloud, rain, pressure, RH).
-  // Boost visual contrast so low but non‑zero cloud water shows up.
+  // Pack volume atlas with wind tell-tail visualization
   let scaleN = max(1.0, 64.0 / f32(N())); // higher res → scale up visibility
   let cloud01 = clamp(qc * 8000.0 * scaleN, 0.0, 1.0);
   let rain01 = clamp(qr * 800.0, 0.0, 1.0);
@@ -1027,7 +1126,72 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let ty = gid.z / tilesX();
   let ax = tx * n + gid.x;
   let ay = ty * n + gid.y;
-  outPixels[ay * atlasW() + ax] = packRGBA8(cloud01, rain01, p01, rh01);
+  
+  // Wind tell-tail: draw lines showing wind direction, colored by pressure
+  let windMag = length(vel);
+  let windSpeed01 = clamp(windMag / maxWind(), 0.0, 1.0);
+  
+  // Pressure coloring: RED = low pressure (cyclone), BLUE = high pressure (anticyclone)
+  let lowP = clamp((0.5 - p01) * 4.0, 0.0, 1.0);   // Red intensity for low pressure
+  let highP = clamp((p01 - 0.5) * 4.0, 0.0, 1.0);  // Blue intensity for high pressure
+  
+  // Base color shows pressure system type vividly
+  var baseR = lowP * 0.9 + highP * 0.1;     // Red for low pressure
+  var baseG = 0.15 + windSpeed01 * 0.3;      // Green shows wind strength
+  var baseB = highP * 0.9 + lowP * 0.1;     // Blue for high pressure
+  
+  // Brighten based on wind magnitude
+  let brightness = 0.3 + windSpeed01 * 0.7;
+  baseR = baseR * brightness;
+  baseG = baseG * brightness;
+  baseB = baseB * brightness;
+  
+  // Add cloud overlay (white)
+  baseR = baseR + cloud01 * 0.5;
+  baseG = baseG + cloud01 * 0.5;
+  baseB = baseB + cloud01 * 0.5;
+  
+  // Draw the base cell
+  outPixels[ay * atlasW() + ax] = packRGBA8(baseR, baseG, baseB, 1.0);
+  
+  // Draw wind tell-tail as bright line extending from this cell in wind direction
+  // Only draw if this is a "leader" cell (every other cell draws the tail)
+  if (windMag > 1.0 && (gid.x % 2u == 0u) && (gid.y % 2u == 0u)) {
+    // Normalize wind direction in 3D space, project to XY of voxel grid
+    let windDir = vel / max(windMag, 1e-6);
+    
+    // Length of tail based on wind speed (1-3 cells)
+    let tailLen = 1u + u32(windSpeed01 * 2.0);
+    
+    // Draw the tail line - bright white/yellow
+    let tailR = 1.0;
+    let tailG = 0.9;
+    let tailB = 0.2;
+    
+    for (var step: u32 = 1u; step <= tailLen; step = step + 1u) {
+      // Calculate tail position based on wind direction
+      let offsetX = i32(round(windDir.x * f32(step) * 1.5));
+      let offsetY = i32(round(windDir.y * f32(step) * 1.5));
+      
+      let tailX = i32(gid.x) + offsetX;
+      let tailY = i32(gid.y) + offsetY;
+      
+      // Bounds check within this tile
+      if (tailX >= 0 && tailX < i32(n) && tailY >= 0 && tailY < i32(n)) {
+        let tailAx = tx * n + u32(tailX);
+        let tailAy = ty * n + u32(tailY);
+        
+        // Fade tail brightness with distance
+        let fade = 1.0 - f32(step) / f32(tailLen + 1u);
+        outPixels[tailAy * atlasW() + tailAx] = packRGBA8(
+          tailR * fade + baseR * (1.0 - fade),
+          tailG * fade + baseG * (1.0 - fade),
+          tailB * fade + baseB * (1.0 - fade),
+          1.0
+        );
+      }
+    }
+  }
 
 }
         `;
@@ -1104,7 +1268,8 @@ fn surfaceIndexFromDir(dir: vec3<f32>) -> u32 {
 fn groundAltFromSurface(s: vec4<f32>) -> f32 {
   let ocean = clamp(s.x, 0.0, 1.0);
   let elev01 = clamp(s.y, 0.0, 1.0);
-  return (1.0 - ocean) * elev01 * mountainHeightM();
+  // Must match sim shader: oceans at sea level offset, land at elevation
+  return mix(seaOffsetM(), elev01 * mountainHeightM(), 1.0 - ocean);
 }
 
 fn packRGBA8(r: f32, g: f32, b: f32, a: f32) -> u32 {
@@ -1156,11 +1321,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Integrate along the column to form 2D maps.
   var maxQc = 0.0;
   var maxQr = 0.0;
-  var pMid = 0.0;
+  var pSum = 0.0;
+  var pCount = 0.0;
   var Tsurf = 280.0;
   var velSample = vec3<f32>(0.0);
 
   // Sample more layers so thin clouds are captured in the 2D maps.
+  // Also average pressure across the lower atmosphere for a stable signal.
   let steps: u32 = 32u;
   for (var k: u32 = 0u; k < steps; k = k + 1u) {
     let t = (f32(k) + 0.5) / f32(steps);
@@ -1170,9 +1337,30 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     maxQc = max(maxQc, s.a.z);
     maxQr = max(maxQr, s.a.w);
     if (k == 0u) { Tsurf = s.a.x; }
-    if (k == steps / 2u) { pMid = s.b.x; }
+    // Average pressure across lower half of atmosphere for more stable signal
+    if (k < steps / 2u) { 
+      pSum += s.b.x; 
+      pCount += 1.0;
+    }
     if (k == 3u) { velSample = s.b.yzw; }
   }
+  let pMid = select(0.0, pSum / pCount, pCount > 0.0);
+
+  // If 3D sampling didn't get good pressure data, use latitude-based Hadley pattern directly
+  // This ensures the 2D texture shows proper pressure variation even with coarse voxels
+  let latAbs = abs(dir.y);
+  // Subtropical high pressure belt at ~30° latitude
+  let subtropicalHigh = exp(-pow((latAbs - 0.5) / 0.2, 2.0)) * 1500.0;
+  // Equatorial low (ITCZ)
+  let itczLow = exp(-pow(latAbs / 0.15, 2.0)) * -1200.0;
+  // Polar high
+  let polarHigh = smoothstep(0.7, 0.95, latAbs) * 800.0;
+  let hadleyP = subtropicalHigh + itczLow + polarHigh;
+  
+  // Blend sampled pressure with analytical Hadley pattern
+  // If pMid is near zero (no valid voxel data), use pure Hadley
+  let pMidValid = select(0.0, 1.0, abs(pMid) > 10.0);
+  let pFinal = mix(hadleyP, pMid, pMidValid * 0.7);
 
   // Update surface rain/soil/snow (simple persistence).
   let liquid = smoothstep(271.15, 275.15, Tsurf);
@@ -1201,7 +1389,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // If column is very humid but maxQc is tiny, boost cloud to make it visible.
   var cloud01 = clamp(maxQc * 600.0, 0.0, 1.0);
   let rain01 = clamp(rain * 800.0, 0.0, 1.0);
-  let p01 = clamp(0.5 + pMid * (1.0 / 6000.0), 0.0, 1.0);
+  // Use pFinal (blended with analytical Hadley pattern) for stable pressure visualization
+  let p01 = clamp(0.5 + pFinal * (1.0 / 6000.0), 0.0, 1.0);
   outPixels[weatherOffset() + i2] = packRGBA8(cloud01, rain01, p01, clamp(soil, 0.0, 1.0));
 
   // Aux map (temp, snow, windU, windV) where wind is (east,north).

@@ -6,6 +6,7 @@ import { InputRouter } from './InputRouter.js';
 import { WaterCycleSystem } from './WaterCycleSystem.js';
 import { WaterCycleVolumeSystem } from './WaterCycleVolumeSystem.js';
 import { RainSystem } from './RainSystem.js';
+import { WindVisualizationSystem } from './WindVisualizationSystem.js';
 import { clamp, isMobileDevice, sampleDataTextureRGBA } from './utils.js';
 import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, MAX_DELTA_TIME, PRESETS } from './constants.js';
 import { UIManager } from './UIManager.js';
@@ -527,6 +528,7 @@ const weatherAutoState = {
 
 const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
 const windSystem = new WindSystem(scene, { maxSprites: 950 });
+const windVizSystem = new WindVisualizationSystem(planetGroup);
 
 fpsDiv = document.createElement('div');
 fpsDiv.style.position = 'fixed';
@@ -1521,8 +1523,22 @@ function animate() {
     }
     if (rainSystem) rainSystem.update(delta);
     
+    // Update 3D wind visualization on the globe (only in volume debug mode)
+    if (windVizSystem && lastPlanetSettings) {
+        const showWindViz = volumeDebugEnabled;
+        windVizSystem.setVisible(showWindViz);
+        if (showWindViz) {
+            windVizSystem.setWeatherTextures(getWeatherTexture(), getWeatherAuxTexture());
+            windVizSystem.setPlanetRadius(lastPlanetSettings.radius + (lastPlanetSettings.heightScale * 0.1));
+            windVizSystem.update();
+        }
+    }
+    
     setPlanetWeatherTexture(getWeatherTexture());
     setPlanetWeatherAuxTexture(getWeatherAuxTexture());
+    
+    // Connect weather wind texture to ocean shader for wind-driven waves
+    planetManager.setOceanWindTexture(getWeatherAuxTexture());
     
     sceneManager.update(!tinyControls.enabled);
 }
@@ -2102,6 +2118,39 @@ window.addEventListener('resize', onResize);
 if (invertLookEl) invertLookEl.addEventListener('change', updateRangeLabels);
 setWaterCycleUiDisabled(true);
 void selectWaterCycleSystemIfNeeded();
+
+// Initialize ocean compute system for WebGPU wave simulation
+(async () => {
+    try {
+        await planetManager.initOceanCompute();
+        if (planetManager.oceanComputeSystem?.enabled) {
+            console.log('[Ocean] WebGPU compute ocean initialized');
+        }
+    } catch (err) {
+        console.warn('[Ocean] Failed to init compute ocean:', err);
+    }
+})();
+
+// Water shader change handler
+if (waterShaderEl) {
+    waterShaderEl.addEventListener('change', () => {
+        if (!lastPlanetSettings || !planetManager.planet) return;
+        const shaderType = getWaterShader();
+        const s = lastPlanetSettings;
+        // Rebuild water mesh with new shader type
+        const newWater = planetManager.buildWaterMesh(
+            s.radius,
+            s.subdivisions,
+            s.seaLevel,
+            s.heightScale,
+            s.iceCap,
+            shaderType
+        );
+        planetManager.replaceWater(newWater);
+        water = planetManager.water;
+        ui.setStatus(`Water shader: ${shaderType}`);
+    });
+}
 
 const urlQualityPreset = getQualityPresetFromUrl();
 if (urlQualityPreset && presetEl) {

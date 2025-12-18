@@ -47,6 +47,7 @@ export class TinyPlanetControls {
         this.lookRight = false;
         this.isRunning = false;
         this.canJump = false;
+        this.jumpRequested = false;
         this.keyLookYawVelocity = 0;
         this.keyLookPitchVelocity = 0;
         this.keyLookRollVelocity = 0;
@@ -216,9 +217,8 @@ export class TinyPlanetControls {
                 event.preventDefault();
                 if(this.isFlying) {
                     this.moveUp = true;
-                } else if (this.canJump) { 
-                    this.verticalVelocity = this.jumpForce; 
-                    this.canJump = false; 
+                } else {
+                    this.jumpRequested = true;
                 }
                 break;
             case 'ControlLeft':
@@ -368,9 +368,8 @@ export class TinyPlanetControls {
             if (this.externalInput.consume('surface')) {
                 this.snapToSurface();
             }
-            if (!this.isFlying && this.canJump && this.externalInput.consume('jump')) {
-                this.verticalVelocity = this.jumpForce;
-                this.canJump = false;
+            if (!this.isFlying && this.externalInput.consume('jump')) {
+                this.jumpRequested = true;
             }
             const look = this.externalInput.consumeLookDelta();
             if (Math.abs(look.x) > 1e-4 || Math.abs(look.y) > 1e-4) {
@@ -450,7 +449,7 @@ export class TinyPlanetControls {
             }
             const currentHeight = this.player.position.length();
             const floorHeight = targetHeight + this.playerHeight;
-            const isOnGround = currentHeight <= floorHeight + 0.02;
+            const isOnGround = currentHeight <= floorHeight + 0.05;
 
             const applyFriction = () => {
                 const v = this.horizontalVelocity;
@@ -487,20 +486,38 @@ export class TinyPlanetControls {
             const moveStep = this.horizontalVelocity.clone().multiplyScalar(dt);
             this.player.position.add(moveStep);
 
-            if (!isOnGround) {
-                this.verticalVelocity -= this.gravity * dt;
-                this.player.translateY(this.verticalVelocity * dt);
-            } else {
-                this.verticalVelocity = 0;
+            // Process jump request when on ground BEFORE applying gravity
+            if (isOnGround) {
                 this.canJump = true;
+                if (this.jumpRequested && this.canJump) {
+                    this.verticalVelocity = this.jumpForce;
+                    this.canJump = false;
+                    // Don't zero velocity - we just jumped!
+                } else {
+                    this.verticalVelocity = 0;
+                }
+            } else {
+                // In air - apply gravity
+                this.verticalVelocity -= this.gravity * dt;
+            }
+            
+            // Apply vertical movement
+            if (Math.abs(this.verticalVelocity) > 1e-6) {
+                this.player.translateY(this.verticalVelocity * dt);
             }
 
+            // Floor collision - clamp to ground
             if (this.player.position.length() < floorHeight) {
                 const dir = this.player.position.clone().normalize();
                 this.player.position.copy(dir.multiplyScalar(floorHeight));
-                this.verticalVelocity = 0;
+                if (this.verticalVelocity < 0) {
+                    this.verticalVelocity = 0;
+                }
                 this.canJump = true;
             }
+            
+            // Clear jump request at end of frame
+            this.jumpRequested = false;
 
             const upNow = this.player.position.clone().normalize();
             const currentUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.player.quaternion);

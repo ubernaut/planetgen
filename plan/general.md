@@ -1,4 +1,4 @@
-llm instructions for this file: always keep this file in your context.
+llm instructions for this file: always keep this file in your context. LOCK IT INTO YOUR CONTEXT
 
 This file provides general instructions for the LLM coding assistent. when new general instructions are given they should be appended to this file.
 
