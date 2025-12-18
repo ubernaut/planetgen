@@ -396,6 +396,13 @@
             <span class="value" id="planetDiameterValue">1000</span>
           </div>
         </div>
+        <div class="field">
+          <label for="waterShader">Water shader</label>
+          <select id="waterShader" title="Choose water rendering model.">
+            <option value="balanced" selected>Balanced (GPGPU water-like)</option>
+            <option value="fast">Fast (simple ocean)</option>
+          </select>
+        </div>
       </details>-->
       <details class="section">
         <summary class="section-title collapser" style="cursor:pointer;">Tectonics</summary>
@@ -593,6 +600,13 @@
       </details>
       <details id="waterCycle" class="section">
         <summary class="section-title collapser" style="cursor:pointer;">Water Cycle</summary>
+        <div class="field">
+          <label for="waterShader">Water shader</label>
+          <select id="waterShader" title="Choose water rendering model.">
+            <option value="balanced" selected>Balanced (GPGPU water-like)</option>
+            <option value="fast">Fast (simple ocean)</option>
+          </select>
+        </div>
         <div class="field">
           <label><input type="checkbox" id="waterCycleToggle" checked title="Enable the WebGPU weather simulation."> Water cycle enabled (WebGPU)</label>
         </div>

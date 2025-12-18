@@ -30,6 +30,8 @@ export class UIManager {
             faultType: document.getElementById('faultType'),
             desymmetrizeTiling: document.getElementById('desymmetrizeTiling'),
             atmosphere: document.getElementById('atmosphere'),
+            waterShader: document.getElementById('waterShader'),
+            waterShader: document.getElementById('waterShader'),
             // Labels
             jitterValue: document.getElementById('jitterValue'),
             heightScaleValue: document.getElementById('heightScaleValue'),
@@ -135,6 +137,7 @@ export class UIManager {
         if (this.els.cloudColor && preset.cloudColor !== undefined) this.els.cloudColor.value = preset.cloudColor;
         if (this.els.cloudResolution && preset.cloudResolution !== undefined) this.els.cloudResolution.value = preset.cloudResolution;
         if (this.els.cloudShader && preset.cloudShader !== undefined) this.els.cloudShader.value = preset.cloudShader;
+        if (this.els.waterShader) this.els.waterShader.value = preset.waterShader || (key === 'fast' ? 'fast' : 'balanced');
         this.updateRangeLabels();
     }
 
@@ -159,7 +162,8 @@ export class UIManager {
             iceCap: clamp(parseFloat(this.els.iceCap?.value) || 0.1, 0, 1),
             plateDelta: clamp(parseFloat(this.els.plateDelta?.value) || 1.25, 0, 2),
             faultType: this.els.faultType?.value || 'ridge',
-            radius: BASE_RADIUS_UNITS
+            radius: BASE_RADIUS_UNITS,
+            waterShader: this.els.waterShader?.value || 'balanced'
         };
     }
 
@@ -184,6 +188,7 @@ export class UIManager {
         if (this.els.iceCap) this.els.iceCap.value = settings.iceCap;
         if (this.els.plateDelta) this.els.plateDelta.value = settings.plateDelta;
         if (this.els.faultType) this.els.faultType.value = settings.faultType;
+        if (this.els.waterShader) this.els.waterShader.value = settings.waterShader || 'balanced';
         this.updateRangeLabels();
     }
 
@@ -195,7 +200,7 @@ export class UIManager {
             this.els.iterations, this.els.erosionRate, this.els.evaporation, 
             this.els.seaLevel, this.els.atmosphere, this.els.smoothPasses, 
             this.els.subdivisions, this.els.iceCap, this.els.plateDelta, 
-            this.els.faultType
+            this.els.faultType, this.els.waterShader
         ];
 
         regenControls.forEach(el => {

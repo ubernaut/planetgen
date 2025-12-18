@@ -189,32 +189,48 @@ export class TinyPlanetControls {
     }
 
     onKeyDown(event) {
-        switch (event.code) {
+        const code = event.code;
+        switch (code) {
             case 'ArrowUp':
                 this.lookUp = true;
+                event.preventDefault();
                 break;
             case 'ArrowDown':
                 this.lookDown = true;
+                event.preventDefault();
                 break;
             case 'ArrowLeft':
                 this.lookLeft = true;
+                event.preventDefault();
                 break;
             case 'ArrowRight':
                 this.lookRight = true;
+                event.preventDefault();
                 break;
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
             case 'KeyS': this.moveBackward = true; break;
             case 'KeyD': this.moveRight = true; break;
-            case 'Space': 
-                if(this.isFlying) this.moveUp = true;
-                else if (this.canJump) { 
+            case 'Space':
+            case 'Numpad0':
+                event.preventDefault();
+                if(this.isFlying) {
+                    this.moveUp = true;
+                } else if (this.canJump) { 
                     this.verticalVelocity = this.jumpForce; 
                     this.canJump = false; 
                 }
                 break;
-            case 'ControlLeft': this.moveDown = true; break;
-            case 'ShiftLeft': this.isRunning = true; break;
+            case 'ControlLeft':
+            case 'ControlRight':
+            case 'KeyC':
+                event.preventDefault();
+                this.moveDown = true;
+                break;
+            case 'ShiftLeft':
+            case 'ShiftRight':
+                this.isRunning = true;
+                break;
             case 'KeyF': this.toggleFlight(); break;
             case 'KeyQ': this.rollLeft = true; break;
             case 'KeyE': this.rollRight = true; break;
@@ -223,7 +239,8 @@ export class TinyPlanetControls {
     }
 
     onKeyUp(event) {
-        switch (event.code) {
+        const code = event.code;
+        switch (code) {
             case 'ArrowUp': this.lookUp = false; break;
             case 'ArrowDown': this.lookDown = false; break;
             case 'ArrowLeft': this.lookLeft = false; break;
@@ -232,9 +249,19 @@ export class TinyPlanetControls {
             case 'KeyA': this.moveLeft = false; break;
             case 'KeyS': this.moveBackward = false; break;
             case 'KeyD': this.moveRight = false; break;
-            case 'Space': this.moveUp = false; break;
-            case 'ControlLeft': this.moveDown = false; break;
-            case 'ShiftLeft': this.isRunning = false; break;
+            case 'Space':
+            case 'Numpad0':
+                this.moveUp = false;
+                break;
+            case 'ControlLeft':
+            case 'ControlRight':
+            case 'KeyC':
+                this.moveDown = false;
+                break;
+            case 'ShiftLeft':
+            case 'ShiftRight':
+                this.isRunning = false;
+                break;
             case 'KeyQ': this.rollLeft = false; break;
             case 'KeyE': this.rollRight = false; break;
         }

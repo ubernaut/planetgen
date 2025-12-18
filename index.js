@@ -9,6 +9,7 @@ import { RainSystem } from './RainSystem.js';
 import { clamp, isMobileDevice, sampleDataTextureRGBA } from './utils.js';
 import { BASE_RADIUS_UNITS, DEFAULT_DIAMETER_KM, DEFAULT_RADIUS_M, PERSON_HEIGHT_M, MAX_DELTA_TIME, PRESETS } from './constants.js';
 import { UIManager } from './UIManager.js';
+import { WindSystem } from './WindSystem.js';
 
 const canvas = document.getElementById('viewport');
 const hudEl = document.getElementById('hud');
@@ -117,6 +118,7 @@ const weatherRainFxEl = document.getElementById('weatherRainFx');
 const weatherRainFxValueEl = document.getElementById('weatherRainFxValue');
 const weatherRainHazeEl = document.getElementById('weatherRainHaze');
 const weatherRainHazeValueEl = document.getElementById('weatherRainHazeValue');
+const waterShaderEl = document.getElementById('waterShader');
 const movePadEl = document.getElementById('movePad');
 const lookPadEl = document.getElementById('lookPad');
 const mobileControlsEl = document.getElementById('mobileControls');
@@ -408,6 +410,36 @@ const input = new InputRouter();
 input.setMode(isMobileDevice() ? 'mobile' : 'desktop');
 input.setLookMode('orbit');
 
+// Desktop keyboard helpers to ensure jump/down actions are seen even if pointer-lock/key events are swallowed elsewhere.
+function bindDesktopKeyboard() {
+    const isEditableTarget = (el) => {
+        if (!el) return false;
+        const tag = el.tagName;
+        if (!tag) return false;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+    };
+    const handler = (e) => {
+        if (isEditableTarget(e.target)) return;
+        const down = e.type === 'keydown';
+        switch (e.code) {
+            case 'ControlLeft':
+            case 'ControlRight':
+            case 'KeyC':
+                input.setAction('down', down);
+                break;
+            case 'Space':
+            case 'Numpad0':
+                if (down) input.trigger('jump');
+                break;
+            default:
+                return;
+        }
+    };
+    window.addEventListener('keydown', handler, { passive: false });
+    window.addEventListener('keyup', handler, { passive: false });
+}
+bindDesktopKeyboard();
+
 const tinyControls = new TinyPlanetControls(camera, renderer.domElement, scene, () => {
     controls.enabled = true;
     ui.setStatus('');
@@ -494,6 +526,7 @@ const weatherAutoState = {
 };
 
 const rainSystem = new RainSystem(scene, { maxDrops: 12000 });
+const windSystem = new WindSystem(scene, { maxSprites: 950 });
 
 fpsDiv = document.createElement('div');
 fpsDiv.style.position = 'fixed';
@@ -708,6 +741,8 @@ function computeWindWorldFromAux(tex, invScale, planetInvRot, out) {
     const px = sampleDataTextureRGBA(tex, u, v);
     const uNorm = ((px.b ?? 128) / 255 - 0.5) * 2;
     const vNorm = ((px.a ?? 128) / 255 - 0.5) * 2;
+    // Scale decoded winds up so ground FX remain visible.
+    const windScale = 40;
 
     // Local tangent basis (east/north).
     weatherTmpVecB.set(-dirLocal.z, 0, dirLocal.x);
@@ -716,7 +751,7 @@ function computeWindWorldFromAux(tex, invScale, planetInvRot, out) {
     weatherTmpVecC.crossVectors(dirLocal, weatherTmpVecB).normalize();
 
     // Wind vector in planet-local (tangent plane).
-    weatherTmpVecD.copy(weatherTmpVecB).multiplyScalar(uNorm).addScaledVector(weatherTmpVecC, vNorm);
+    weatherTmpVecD.copy(weatherTmpVecB).multiplyScalar(uNorm).addScaledVector(weatherTmpVecC, vNorm).multiplyScalar(windScale);
 
     // Rotate into world space (rot = transpose(invRot) for pure rotation).
     weatherTmpMat3.copy(planetInvRot).transpose();
@@ -726,13 +761,9 @@ function computeWindWorldFromAux(tex, invScale, planetInvRot, out) {
     const upWorld = weatherTmpVecA.copy(camera.position).normalize();
     windWorld.addScaledVector(upWorld, -windWorld.dot(upWorld));
 
-    // Clamp magnitude and avoid NaNs.
+    // Avoid NaNs.
     const len = windWorld.length();
     if (!(len > 1e-6)) windWorld.set(0, 0, 0);
-    else {
-        const mag = Math.min(1.0, len);
-        windWorld.multiplyScalar(mag / len);
-    }
     return windWorld;
 }
 
@@ -940,10 +971,13 @@ function applyPreset(key) {
     ui.applyPreset(key);
     const preset = PRESETS[key] || PRESETS.balanced;
     applyWeatherPreset(preset);
+    if (waterShaderEl) waterShaderEl.value = key === 'fast' ? 'fast' : 'balanced';
 }
 
 function readSettings() {
-    return ui.readSettings();
+    const base = ui.readSettings();
+    base.waterShader = getWaterShader();
+    return base;
 }
 
 function writeSettings(settings) {
@@ -956,6 +990,10 @@ function getQualityPresetFromUrl() {
     const quality = (params.get('quality') || '').toLowerCase();
     if (quality === 'fast' || quality === 'balanced' || quality === 'high') return quality;
     return null;
+}
+
+function getWaterShader() {
+    return waterShaderEl?.value || 'balanced';
 }
 
 function updateQualityParam(key) {
@@ -1053,7 +1091,8 @@ async function generateWorld(presetKey) {
     const settings = {
         ...readSettings(),
         planetDiameterKm: getPlanetDiameterKm(),
-        atmosphereEnabled: atmosphereToggleEl?.checked ?? true
+        atmosphereEnabled: atmosphereToggleEl?.checked ?? true,
+        waterShader: getWaterShader()
     };
     writeSettings(settings); // ensure UI reflects clamped values
 
@@ -1469,9 +1508,18 @@ function animate() {
     if (rainSystem) {
         rainSystem.setWeatherFrame({ planetInvRot: weatherInvRot, planetInvScale: invScale });
         rainSystem.setWeatherMap(getWeatherTexture());
-        rainSystem.setWindWorld(computeWindWorldFromAux(getWeatherAuxTexture(), invScale, weatherInvRot, weatherWindWorld));
-        rainSystem.update(delta);
     }
+    const windVec = computeWindWorldFromAux(getWeatherAuxTexture(), invScale, weatherInvRot, weatherWindWorld);
+    if (rainSystem) rainSystem.setWindWorld(windVec);
+    if (windSystem) {
+        windSystem.setCenter(camera.position);
+        windSystem.setWind(windVec);
+        windSystem.update(delta);
+    }
+    if (planetManager?.waterUniforms?.windStrength) {
+        planetManager.waterUniforms.windStrength.value = Math.min(Math.max(windVec.length() * 1.5, 0.05), 3.0);
+    }
+    if (rainSystem) rainSystem.update(delta);
     
     setPlanetWeatherTexture(getWeatherTexture());
     setPlanetWeatherAuxTexture(getWeatherAuxTexture());

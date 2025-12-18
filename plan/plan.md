@@ -40,5 +40,4 @@ llm instructions for this file: this file contains the high level project plan. 
     * nebulae
 
 * known regressions / blockers
-    * TinyPlanet first-person controls broken after refactor (spawn height/orientation and pointer-lock/mouselook). Pending fix.
     

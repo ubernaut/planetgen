@@ -3,13 +3,8 @@ llm instructions for this file: this file contains the short term goals for this
 immediate goals: 
 
 
-- Precipitation coupling: drive biomes/erosion/glaciers from water-cycle precip (snow/rain), accumulate/melt snow visibly, feed rivers/lakes/wetness from spatial precip rather than uniform erosion input, and add ground-level wind visuals (dust/particles) based on the simulated wind field.
-- 3D winds/pressure: ensure the volumetric weather sim produces altitude-varying winds and pressure systems (vertical shear, boundary-layer drag/orographic influence), and expose wind visually at ground level.
 - Weather/space: tune 3D voxel clouds at high resolution, add axial tilt + physical sun/moon for seasons and moon phases; wire precip → surface moisture/biomes/erosion/glaciers.
 - Weather/space: add raymarch budget bounds and ray bundling controls for volumetric cloud performance tuning.
-- Water shaders to port (for future work):
-  - Balanced target: https://github.com/mrdoob/three.js/blob/master/examples/webgl_gpgpu_water.html
-  - Fast target: https://threejs.org/examples/?q=water#webgl_shaders_ocean
 
 recent progress:
 
@@ -75,9 +70,10 @@ recent progress:
 
 ### High: TinyPlanetControls Stability
 
-**Problem:** First-person controls remain unstable despite multiple fix attempts (spawn height corrected; orientation/pointer-lock/mobile integration still shaky).
+**Problem:** First-person controls remain unstable despite multiple fix attempts.
 
 **Known Issues (from council.md and log.md):**
+- Spawn height logic may place player underground
 - Orientation can face inward toward planet center
 - Pointer lock behavior inconsistent
 - Mobile input not fully integrated with controls
@@ -253,12 +249,3 @@ recent progress:
 - Continue module integration: move DOM/state wiring into UIManager and delete legacy builders left in index.js
 - Add more constants for physics values (walkSpeed, gravity, etc.) in TinyPlanetControls
 - Consider weather auto-scaling refinements: adapter-based starting tier and optional 3D→2D fallback when budget is missed at lowest tier
-
----
-
-## Precipitation → Biomes/Erosion/Glaciers (New Requirements)
-
-- Use simulated precip (rain + snow) from the water cycle to drive surface hydrology: accumulate glaciers/snowpack, feed rivers/lakes, and modulate soil wetness/biome shading instead of assuming uniform rainfall.
-- Couple erosion input to precip distribution: erosion strength/flow sourcing should follow the spatial rain/snowmelt fields rather than a flat rate.
-- Snow visuals: falling snow should look like snow (not rain), settle on the ground, and melt seasonally; snowpack should thicken glaciers in cold zones.
-- Wind visibility: expose wind at ground level with visible dust/particle advection tied to the simulated wind vectors so wind is readable from the surface.

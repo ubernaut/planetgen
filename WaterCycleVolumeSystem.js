@@ -95,6 +95,8 @@ export class WaterCycleVolumeSystem {
         this.evapStrength = 1.0;
         this.precipStrength = 1.0;
         this.windStrength = 1.0;
+        this.windShear = 0.6;
+        this.surfaceDrag = 0.4;
         this.oceanInertia = 0.25;
 
         this.planetRadiusM = 500_000;
@@ -139,7 +141,9 @@ export class WaterCycleVolumeSystem {
         precipStrength,
         windStrength,
         oceanInertia,
-        atmoThicknessM
+        atmoThicknessM,
+        windShear,
+        surfaceDrag
     } = {}) {
         if (Number.isFinite(timeScale)) this.timeScale = Math.max(0, timeScale);
         if (Number.isFinite(readbackIntervalS)) this.readbackIntervalS = Math.max(0.01, readbackIntervalS);
@@ -148,6 +152,8 @@ export class WaterCycleVolumeSystem {
         if (Number.isFinite(windStrength)) this.windStrength = Math.max(0, windStrength);
         if (Number.isFinite(oceanInertia)) this.oceanInertia = clamp01(oceanInertia);
         if (Number.isFinite(atmoThicknessM)) this.atmoThicknessM = Math.max(1000, atmoThicknessM);
+        if (Number.isFinite(windShear)) this.windShear = Math.max(0, windShear);
+        if (Number.isFinite(surfaceDrag)) this.surfaceDrag = Math.max(0, surfaceDrag);
     }
 
     getVolumeTexture() {
@@ -639,8 +645,8 @@ export class WaterCycleVolumeSystem {
         u[44] = this.mountainHeightM;
         // Sea level offset in meters so oceans start at sea surface, not planet base radius.
         u[45] = (this.seaLevel - 0.5) * this.mountainHeightM;
-        u[46] = 0;
-        u[47] = 0;
+        u[46] = this.windShear;
+        u[47] = this.surfaceDrag;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
     }
@@ -704,6 +710,8 @@ fn tilesX() -> u32 { return u32(params[9].z + 0.5); }
 
 fn oceanInertia() -> f32 { return clamp(params[10].z, 0.05, 1.0); }
 fn mountainHeightM() -> f32 { return max(params[11].x, 0.0); }
+fn windShear() -> f32 { return max(params[11].z, 0.0); }
+fn surfaceDrag() -> f32 { return clamp(params[11].w, 0.05, 2.5); }
 
 fn idx3(x: u32, y: u32, z: u32) -> u32 {
   let n = N();
@@ -838,14 +846,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Radiative equilibrium temperature proxy.
   let insolation = max(dot(dir, normalize(sunDir())), 0.0);
+  // Simple cloud shading: attenuate insolation by in-column cloud/rain.
+  let cloudShade = clamp(qc * 3.0 + qr * 6.0, 0.0, 0.7);
   // Keep a floor so the sun-facing half still evaporates when the sun is low.
-  let insFloor = max(insolation, 0.2);
+  let insFloor = max(insolation, 0.2) * (1.0 - cloudShade);
   let latFactor = abs(dir.y);
   let snowCover = snow * (1.0 - ocean);
-  let albedoBase = mix(0.22, 0.06, ocean);
+  var albedoBase = mix(0.22, 0.06, ocean);
+  // Wet land darkens and gains thermal mass.
+  let wetFactor = soil * (1.0 - ocean);
+  albedoBase = mix(albedoBase, 0.12, wetFactor);
   let albedo = mix(albedoBase, 0.75, snowCover);
   let Teq = baseTempK() - 55.0 * latFactor + solarHeatingK() * insFloor * (1.0 - albedo) - (lapseRate() * altEff);
-  let relaxRate = tempRelax() * mix(1.0, oceanInertia(), ocean);
+  let relaxRate = tempRelax() * mix(1.0, mix(0.65, oceanInertia(), ocean), wetFactor);
   T = mix(T, Teq, clamp(dt() * relaxRate, 0.0, 1.0));
 
   // Convergence lift proxy (uses full divergence as a cheap stand-in).
@@ -964,13 +977,34 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   vel = mix(vel, vTarget, clamp(dt() * windRelax(), 0.0, 1.0));
   vel *= exp(-windDrag() * dt());
+  let altFrac = clamp(altEff / max(atmoThicknessM(), 1e-3), 0.0, 1.0);
+  // Boundary-layer drag slows near-surface winds; upper levels can accelerate into jets.
+  let blDrag = mix(surfaceDrag(), 1.0, smoothstep(0.05, 0.4, altFrac));
+  let jetGain = mix(0.85, 1.25, smoothstep(0.15, 0.9, altFrac));
+  vel *= blDrag * jetGain;
+  // Turn winds with height to create vertical shear/veering.
+  let veer = (altFrac - 0.35) * windShear();
+  let vHoriz = vel - dir * dot(vel, dir);
+  let vEast0 = dot(vHoriz, east);
+  let vNorth0 = dot(vHoriz, north);
+  let ca = cos(veer);
+  let sa = sin(veer);
+  let vEast = vEast0 * ca - vNorth0 * sa;
+  let vNorthShear = vEast0 * sa + vNorth0 * ca;
+  let vSheared = east * vEast + north * vNorthShear;
+  let vVert = dir * dot(vel, dir);
+  vel = vSheared + vVert;
+  // Add a gentle vertical component from vertical pressure gradients to build stacked systems.
+  let wP = clamp(-dpdz * 0.0015, -8.0, 8.0);
+  vel += dir * wP;
   // Add a small vertical component for convection/uplift so moisture can become volumetric.
   let topFrac = clamp(altEff / max(atmoThicknessM(), 1e-3), 0.0, 1.0);
   let wDamp = 1.0 - smoothstep(0.70, 1.0, topFrac);
   vel += dir * clamp(wLift, -8.0, 8.0) * 0.25 * wDamp;
+  let maxAltWind = mix(maxWind() * 0.65, maxWind() * 1.35, smoothstep(0.08, 0.95, altFrac));
   let sp = length(vel);
-  if (sp > maxWind()) {
-    vel *= maxWind() / max(sp, 1e-3);
+  if (sp > maxAltWind) {
+    vel *= maxAltWind / max(sp, 1e-3);
   }
 
   // Clamp.

@@ -66,10 +66,19 @@ export class SceneManager {
         this.dirLight.position.set(12, 16, 10);
         this.dirLight.castShadow = true;
         this.dirLight.shadow.mapSize.set(2048, 2048);
-        this.dirLight.shadow.camera.near = 1;
-        this.dirLight.shadow.camera.far = 200;
+        this.dirLight.shadow.camera.near = 0.5;
+        this.dirLight.shadow.camera.far = 300;
+        const s = 80;
+        this.dirLight.shadow.camera.left = -s;
+        this.dirLight.shadow.camera.right = s;
+        this.dirLight.shadow.camera.top = s;
+        this.dirLight.shadow.camera.bottom = -s;
         this.scene.add(this.dirLight.target);
         this.scene.add(this.dirLight);
+
+        // Physical sun representation (billboarded glow + core sphere)
+        // Sun visual disabled (directional light still used for lighting/shadows)
+        this.sunMesh = null;
 
         // Starfield
         this.scene.add(this.buildStarfield());

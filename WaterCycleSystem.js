@@ -698,9 +698,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let latFactor = abs(sinLat);
   let snowCover = clamp(snow, 0.0, 1.0) * (1.0 - ocean);
   let albedoBase = mix(0.22, 0.06, ocean);
+  // Wet land darkens and gains thermal inertia.
+  let wet = soil0 * (1.0 - ocean);
+  albedoBase = mix(albedoBase, 0.12, wet);
+  let cloudShade = clamp(qc * 3.0 + rain0 * 4.0, 0.0, 0.7);
   let albedo = mix(albedoBase, 0.75, snowCover);
-  let Teq = baseTemp() - 55.0 * latFactor + solarHeatingK() * insolation * (1.0 - albedo) - (lapseRate() * altM);
-  let relaxRate = tempRelax() * mix(1.0, oceanTempRelaxMul(), ocean);
+  let Teq = baseTemp() - 55.0 * latFactor + solarHeatingK() * insolation * (1.0 - cloudShade) * (1.0 - albedo) - (lapseRate() * altM);
+  let relaxRate = tempRelax() * mix(1.0, mix(0.6, oceanTempRelaxMul(), ocean), wet);
   T = mix(T, Teq, clamp(dt * relaxRate, 0.0, 1.0));
 
   // Lift cooling (convergence + orographic).
